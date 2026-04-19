@@ -1,11 +1,11 @@
-# JWTLet
+# Jwtlet
 
-JWTLet is an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) OAuth 2.0 token exchange service for participant
+Jwtlet is an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) OAuth 2.0 token exchange service for participant
 context operations. Clients exchange a Kubernetes service account token for a signed JWT that encodes participant
 context claims. The service validates the incoming token against a Kubernetes OIDC issuer, resolves resource mappings
 and scope-to-claims mappings, and signs the resulting token via HashiCorp Vault.
 
-JWTLet runs two HTTP servers: a **token exchange API** (default port 8080) and a **management API** (default port 8081)
+Jwtlet runs two HTTP servers: a **token exchange API** (default port 8080) and a **management API** (default port 8081)
 for administering resource and scope mappings.
 
 ## Building
