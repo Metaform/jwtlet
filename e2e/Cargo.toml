@@ -1,0 +1,20 @@
+[package]
+name = "jwtlet-e2e-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+dsdk-facet-core = { workspace = true, features = ["test-fixtures"] }
+dsdk-facet-e2e-tests = { git = "https://github.com/eclipse-dataplane-core/dsdk-facet-rs", branch = "main" }
+dsdk-facet-hashicorp-vault = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+e2e = []

@@ -1,0 +1,44 @@
+[workspace]
+members = ["crates/*", "e2e"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bon = "3.9.1"
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+notify = "6"
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+
+dsdk-facet-core = { git = "https://github.com/eclipse-dataplane-core/dsdk-facet-rs", branch = "main" }
+dsdk-facet-postgres = { git = "https://github.com/eclipse-dataplane-core/dsdk-facet-rs", branch = "main" }
+dsdk-facet-hashicorp-vault = { git = "https://github.com/eclipse-dataplane-core/dsdk-facet-rs", branch = "main" }
+
+jwtlet-core = { path = "crates/jwtlet-core" }
+jwtlet-service = { path = "crates/jwtlet-service" }
+
+anyhow = "1"
+config = "0.14"
+
+rstest = "0.23"
+wiremock = "0.6"
+tokio-test = "0.4"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"

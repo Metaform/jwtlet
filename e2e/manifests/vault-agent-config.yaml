@@ -1,0 +1,34 @@
+#  Copyright (c) 2026 Metaform Systems, Inc
+#  SPDX-License-Identifier: Apache-2.0
+
+# Vault Agent config for the jwtlet sidecar.
+# The agent authenticates as jwtlet-sa via Kubernetes auth and writes the
+# resulting token to /vault/secrets/.vault-token for jwtlet to read.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-config-jwtlet
+  namespace: vault-e2e-test
+data:
+  agent.hcl: |
+    pid_file = "/tmp/vault-agent.pid"
+
+    vault {
+      address = "http://vault:8200"
+    }
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "jwtlet-role"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path  = "/vault/secrets/.vault-token"
+          perms = "0644"
+        }
+      }
+    }

@@ -1,0 +1,160 @@
+//  Copyright (c) 2026 Metaform Systems, Inc
+//
+//  This program and the accompanying materials are made available under the
+//  terms of the Apache License, Version 2.0 which is available at
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  SPDX-License-Identifier: Apache-2.0
+//
+//  Contributors:
+//       Metaform Systems, Inc. - initial API and implementation
+//
+
+use crate::config::JwtletConfig;
+use crate::exchange::token_exchange;
+use crate::management::management_routes;
+use axum::{
+    Router,
+    routing::{get, post},
+};
+use jwtlet_core::resource::ResourceService;
+use jwtlet_core::token::TokenExchangeService;
+use std::net::IpAddr;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::net::TcpListener;
+use tokio::select;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
+use tracing::{error, info};
+
+#[derive(Debug, Error)]
+pub enum ServerError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub async fn run_server(
+    config: JwtletConfig,
+    token_service: Arc<TokenExchangeService>,
+    resource_service: Arc<ResourceService>,
+) -> Result<(), ServerError> {
+    let cancel_token = CancellationToken::new();
+    let mut join_set: JoinSet<Result<(), ServerError>> = JoinSet::new();
+
+    join_set.spawn(run_token_exchange_api(
+        config.bind.clone(),
+        config.token_exchange_port,
+        token_service,
+        cancel_token.clone(),
+    ));
+
+    join_set.spawn(run_management_api(
+        config.bind.clone(),
+        config.management_port,
+        resource_service,
+        cancel_token.clone(),
+    ));
+
+    select! {
+        _ = wait_for_shutdown() => {
+            info!("Received shutdown signal");
+            cancel_token.cancel();
+        }
+        Some(result) = join_set.join_next() => {
+            handle_task_result(result);
+            cancel_token.cancel();
+        }
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        handle_task_result(result);
+    }
+
+    Ok(())
+}
+
+async fn run_token_exchange_api(
+    bind: IpAddr,
+    port: u16,
+    service: Arc<TokenExchangeService>,
+    cancel: CancellationToken,
+) -> Result<(), ServerError> {
+    let addr = format!("{bind}:{port}");
+    let listener = TcpListener::bind(&addr).await?;
+    info!("Token exchange API listening on {addr}");
+
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/token", post(token_exchange))
+        .with_state(service)
+        .layer(TraceLayer::new_for_http());
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(cancel.cancelled_owned())
+        .await?;
+
+    Ok(())
+}
+
+async fn run_management_api(
+    bind: IpAddr,
+    port: u16,
+    service: Arc<ResourceService>,
+    cancel: CancellationToken,
+) -> Result<(), ServerError> {
+    let addr = format!("{bind}:{port}");
+    let listener = TcpListener::bind(&addr).await?;
+    info!("Management API listening on {addr}");
+
+    let app = Router::new()
+        .route("/health", get(health))
+        .nest("/api/v1", management_routes())
+        .with_state(service)
+        .layer(TraceLayer::new_for_http());
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(cancel.cancelled_owned())
+        .await?;
+
+    Ok(())
+}
+
+async fn health() -> &'static str {
+    "OK"
+}
+
+fn handle_task_result(result: Result<Result<(), ServerError>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(())) => info!("Server task completed"),
+        Ok(Err(e)) => error!("Server task failed: {e}"),
+        Err(e) => error!("Server task panicked: {e}"),
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown() {
+    use tokio::signal::unix::{SignalKind, signal};
+    if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
+        select! {
+            res = tokio::signal::ctrl_c() => {
+                if let Err(e) = res {
+                    tracing::error!("ctrl_c signal error: {e}");
+                }
+            }
+            _ = sigterm.recv() => {}
+        }
+        return;
+    }
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        error!("ctrl_c signal error: {e}");
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown() {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        error!("ctrl_c signal error: {e}");
+    }
+}
