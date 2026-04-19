@@ -11,8 +11,16 @@
 //
 
 use crate::resource::mem::MemoryResourceStore;
-use crate::resource::{ResourceError, ResourceMapping, ResourceStore};
+use crate::resource::{ResourceError, ResourceMapping, ResourceStore, ScopeMapping};
+use serde_json::{Map, Value};
 use std::collections::HashSet;
+
+fn scope_mapping(scope: &str) -> ScopeMapping {
+    ScopeMapping::builder()
+        .scope(scope.to_string())
+        .claims(Map::<String, Value>::new())
+        .build()
+}
 
 fn mapping(client_id: &str, context: &str, scopes: &[&str]) -> ResourceMapping {
     ResourceMapping::builder()
@@ -32,10 +40,10 @@ async fn save_and_resolve() {
     let result = store.resolve_mapping("client1", "ctx1").await.unwrap();
     assert!(result.is_some());
     let found = result.unwrap();
-    assert_eq!(found.client_identifier, "client1");
-    assert_eq!(found.participant_context, "ctx1");
-    assert!(found.scopes.contains("read"));
-    assert!(found.scopes.contains("write"));
+    assert_eq!(found.resource_mapping.client_identifier, "client1");
+    assert_eq!(found.resource_mapping.participant_context, "ctx1");
+    assert!(found.resource_mapping.scopes.contains("read"));
+    assert!(found.resource_mapping.scopes.contains("write"));
 }
 
 #[tokio::test]
@@ -55,8 +63,8 @@ async fn update_replaces_existing() {
     store.update_mapping(updated).await.unwrap();
 
     let found = store.resolve_mapping("client1", "ctx1").await.unwrap().unwrap();
-    assert_eq!(found.scopes.len(), 3);
-    assert!(found.scopes.contains("admin"));
+    assert_eq!(found.resource_mapping.scopes.len(), 3);
+    assert!(found.resource_mapping.scopes.contains("admin"));
 }
 
 #[tokio::test]
@@ -96,4 +104,79 @@ async fn remove_mappings_for_deletes_all_client_entries() {
     assert!(store.resolve_mapping("client1", "ctx1").await.unwrap().is_none());
     assert!(store.resolve_mapping("client1", "ctx2").await.unwrap().is_none());
     assert!(store.resolve_mapping("client2", "ctx1").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn save_and_update_scope_mapping() {
+    let store = MemoryResourceStore::new();
+    store.save_scope_mapping(scope_mapping("read")).await.unwrap();
+
+    let updated = ScopeMapping::builder()
+        .scope("read".to_string())
+        .claims({
+            let mut m = Map::new();
+            m.insert("role".to_string(), Value::String("admin".to_string()));
+            m
+        })
+        .build();
+    store.update_scope_mapping(updated).await.unwrap();
+}
+
+#[tokio::test]
+async fn update_scope_mapping_returns_not_found_for_missing() {
+    let store = MemoryResourceStore::new();
+
+    let err = store.update_scope_mapping(scope_mapping("ghost")).await.unwrap_err();
+    assert!(matches!(err, ResourceError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn delete_scope_mapping_removes_entry() {
+    let store = MemoryResourceStore::new();
+    store.save_scope_mapping(scope_mapping("write")).await.unwrap();
+
+    store.delete_scope_mapping("write").await.unwrap();
+
+    let err = store.update_scope_mapping(scope_mapping("write")).await.unwrap_err();
+    assert!(matches!(err, ResourceError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn resolve_mapping_includes_registered_scope_mappings() {
+    let store = MemoryResourceStore::new();
+    store
+        .save_mapping(mapping("client1", "ctx1", &["read", "write"]))
+        .await
+        .unwrap();
+    store.save_scope_mapping(scope_mapping("read")).await.unwrap();
+    store.save_scope_mapping(scope_mapping("write")).await.unwrap();
+
+    let pair = store.resolve_mapping("client1", "ctx1").await.unwrap().unwrap();
+    assert_eq!(pair.scope_mappings.len(), 2);
+    assert!(pair.scope_mappings.contains_key("read"));
+    assert!(pair.scope_mappings.contains_key("write"));
+}
+
+#[tokio::test]
+async fn resolve_mapping_omits_scope_mappings_not_registered() {
+    let store = MemoryResourceStore::new();
+    store
+        .save_mapping(mapping("client1", "ctx1", &["read", "write"]))
+        .await
+        .unwrap();
+    store.save_scope_mapping(scope_mapping("read")).await.unwrap();
+
+    let pair = store.resolve_mapping("client1", "ctx1").await.unwrap().unwrap();
+    assert_eq!(pair.scope_mappings.len(), 1);
+    assert!(pair.scope_mappings.contains_key("read"));
+    assert!(!pair.scope_mappings.contains_key("write"));
+}
+
+#[tokio::test]
+async fn resolve_mapping_returns_empty_scope_mappings_when_none_registered() {
+    let store = MemoryResourceStore::new();
+    store.save_mapping(mapping("client1", "ctx1", &["read"])).await.unwrap();
+
+    let pair = store.resolve_mapping("client1", "ctx1").await.unwrap().unwrap();
+    assert!(pair.scope_mappings.is_empty());
 }

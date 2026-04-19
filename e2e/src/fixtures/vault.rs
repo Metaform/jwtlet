@@ -5,8 +5,8 @@
 
 use anyhow::{Context, Result};
 use dsdk_facet_hashicorp_vault::{HashicorpVaultClient, HashicorpVaultConfig, VaultAuthConfig};
-use std::sync::{Arc, Mutex};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use tokio::sync::OnceCell;
 
 static VAULT: OnceCell<Arc<VaultFixture>> = OnceCell::const_new();

@@ -91,10 +91,7 @@ pub async fn assemble_postgres(cfg: &JwtletConfig) -> Result<JwtletRuntime, Jwtl
 // Internal Assembly
 // ============================================================================
 
-async fn assemble(
-    config: &JwtletConfig,
-    store: Arc<dyn ResourceStore>,
-) -> Result<JwtletRuntime, JwtletError> {
+async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Result<JwtletRuntime, JwtletError> {
     let vault_client = create_vault_client(&config.vault).await?;
     let jwt_generator = create_jwt_generator(vault_client, DEFAULT_SIGNING_KEY_PREFIX);
     let verifier = create_k8s_verifier(&config.k8s).await?;

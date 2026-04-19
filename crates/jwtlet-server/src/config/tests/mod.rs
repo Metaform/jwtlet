@@ -13,9 +13,9 @@
 #![allow(clippy::unwrap_used)]
 
 use crate::config::{
-    DEFAULT_BIND_ADDRESS, DEFAULT_MANAGEMENT_PORT, DEFAULT_PARTICIPANT_CONTEXT_CLAIM,
-    DEFAULT_SA_TOKEN_FILE, DEFAULT_TOKEN_EXCHANGE_PORT, DEFAULT_TOKEN_TTL_SECS, JwtletConfig,
-    K8sConfig, StorageBackend, TokenConfig, ValidationError, VaultConfig,
+    DEFAULT_BIND_ADDRESS, DEFAULT_MANAGEMENT_PORT, DEFAULT_PARTICIPANT_CONTEXT_CLAIM, DEFAULT_SA_TOKEN_FILE,
+    DEFAULT_TOKEN_EXCHANGE_PORT, DEFAULT_TOKEN_TTL_SECS, JwtletConfig, K8sConfig, StorageBackend, TokenConfig,
+    ValidationError, VaultConfig,
 };
 
 fn valid_config() -> JwtletConfig {
@@ -206,7 +206,11 @@ fn validate_collects_all_errors_before_returning() {
     // A config missing vault URL, k8s fields, and token fields should report every error.
     let cfg = JwtletConfig::default();
     let err = cfg.validate().expect_err("expected validation to fail");
-    assert!(err.error_count() > 1, "expected multiple errors, got {}", err.error_count());
+    assert!(
+        err.error_count() > 1,
+        "expected multiple errors, got {}",
+        err.error_count()
+    );
     let msgs = err.messages();
     assert!(msgs.iter().any(|m| m.contains("vault.url")));
     assert!(msgs.iter().any(|m| m.contains("k8s.api_server_url")));

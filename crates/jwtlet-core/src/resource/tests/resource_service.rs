@@ -11,7 +11,8 @@
 //
 
 use crate::resource::mem::MemoryResourceStore;
-use crate::resource::{ResourceMapping, ResourceService};
+use crate::resource::{ResourceMapping, ResourceService, ScopeMapping};
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ async fn verify_returns_false_when_no_mapping_exists() {
         .verify("client1", "ctx1", vec!["read".to_string()])
         .await
         .unwrap();
-    assert!(!result);
+    assert!(!result.verified);
 }
 
 #[tokio::test]
@@ -38,7 +39,7 @@ async fn verify_returns_true_when_all_scopes_present() {
         .verify("client1", "ctx1", vec!["read".to_string(), "write".to_string()])
         .await
         .unwrap();
-    assert!(result);
+    assert!(result.verified);
 }
 
 #[tokio::test]
@@ -53,7 +54,7 @@ async fn verify_returns_true_when_requested_scopes_are_subset() {
         .verify("client1", "ctx1", vec!["read".to_string()])
         .await
         .unwrap();
-    assert!(result);
+    assert!(result.verified);
 }
 
 #[tokio::test]
@@ -68,7 +69,7 @@ async fn verify_returns_false_when_scope_is_missing() {
         .verify("client1", "ctx1", vec!["read".to_string(), "write".to_string()])
         .await
         .unwrap();
-    assert!(!result);
+    assert!(!result.verified);
 }
 
 #[tokio::test]
@@ -83,7 +84,54 @@ async fn verify_is_scoped_to_participant_context() {
         .verify("client1", "ctx2", vec!["read".to_string()])
         .await
         .unwrap();
-    assert!(!result);
+    assert!(!result.verified);
+}
+
+#[tokio::test]
+async fn verify_populates_claims_from_scope_mappings() {
+    let service = create_service();
+    service
+        .save(create_mapping("client1", "ctx1", &["read", "write"]))
+        .await
+        .unwrap();
+
+    let mut read_claims = Map::new();
+    read_claims.insert("role".to_string(), Value::String("reader".to_string()));
+    service
+        .save_scope_mapping(ScopeMapping::builder().scope("read".to_string()).claims(read_claims).build())
+        .await
+        .unwrap();
+
+    let mut write_claims = Map::new();
+    write_claims.insert("level".to_string(), Value::String("editor".to_string()));
+    service
+        .save_scope_mapping(ScopeMapping::builder().scope("write".to_string()).claims(write_claims).build())
+        .await
+        .unwrap();
+
+    let result = service
+        .verify("client1", "ctx1", vec!["read".to_string(), "write".to_string()])
+        .await
+        .unwrap();
+    assert!(result.verified);
+    assert_eq!(result.claims["role"], Value::String("reader".to_string()));
+    assert_eq!(result.claims["level"], Value::String("editor".to_string()));
+}
+
+#[tokio::test]
+async fn verify_returns_empty_claims_when_no_scope_mappings_registered() {
+    let service = create_service();
+    service
+        .save(create_mapping("client1", "ctx1", &["read"]))
+        .await
+        .unwrap();
+
+    let result = service
+        .verify("client1", "ctx1", vec!["read".to_string()])
+        .await
+        .unwrap();
+    assert!(result.verified);
+    assert!(result.claims.is_empty());
 }
 
 fn create_service() -> ResourceService {

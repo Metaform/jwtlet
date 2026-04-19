@@ -46,9 +46,11 @@ pub async fn ensure_jwtlet_deployed() -> Result<Arc<JwtletDeployment>> {
             let management_port = get_available_port();
 
             let ns = crate::utils::E2E_NAMESPACE;
-            let pf1 = setup_port_forward(ns, token_exchange_port, 8080).await
+            let pf1 = setup_port_forward(ns, token_exchange_port, 8080)
+                .await
                 .context("Failed to set up token-exchange port-forward")?;
-            let pf2 = setup_port_forward(ns, management_port, 8081).await
+            let pf2 = setup_port_forward(ns, management_port, 8081)
+                .await
                 .context("Failed to set up management port-forward")?;
 
             Ok(Arc::new(JwtletDeployment {
@@ -87,7 +89,10 @@ async fn setup_port_forward(ns: &str, local_port: u16, remote_port: u16) -> Resu
             );
         }
 
-        match child.try_wait().context("Failed to poll kubectl port-forward process")? {
+        match child
+            .try_wait()
+            .context("Failed to poll kubectl port-forward process")?
+        {
             Some(status) => anyhow::bail!("kubectl port-forward exited unexpectedly: {status}"),
             None => {}
         }

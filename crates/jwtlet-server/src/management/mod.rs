@@ -17,8 +17,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{MethodRouter, post, put},
 };
-use jwtlet_core::resource::{ResourceError, ResourceMapping, ResourceService};
+use jwtlet_core::resource::{ResourceError, ResourceMapping, ResourceService, ScopeMapping};
 use std::sync::Arc;
+
+#[cfg(test)]
+mod tests;
 
 pub fn management_routes() -> Router<Arc<ResourceService>> {
     Router::new()
@@ -31,6 +34,8 @@ pub fn management_routes() -> Router<Arc<ResourceService>> {
             "/mappings/{client_id}",
             MethodRouter::new().delete(delete_client_mappings),
         )
+        .route("/scopes", post(create_scope_mapping))
+        .route("/scopes/{scope}", put(update_scope_mapping).delete(delete_scope_mapping))
 }
 
 async fn create_mapping(State(service): State<Arc<ResourceService>>, Json(mapping): Json<ResourceMapping>) -> Response {
@@ -66,6 +71,37 @@ async fn delete_client_mappings(
     Path(client_id): Path<String>,
 ) -> Response {
     match service.remove_for(&client_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => resource_error_response(e),
+    }
+}
+
+async fn create_scope_mapping(
+    State(service): State<Arc<ResourceService>>,
+    Json(mapping): Json<ScopeMapping>,
+) -> Response {
+    match service.save_scope_mapping(mapping).await {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(e) => resource_error_response(e),
+    }
+}
+
+async fn update_scope_mapping(
+    State(service): State<Arc<ResourceService>>,
+    Path(_scope): Path<String>,
+    Json(mapping): Json<ScopeMapping>,
+) -> Response {
+    match service.update_scope_mapping(mapping).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => resource_error_response(e),
+    }
+}
+
+async fn delete_scope_mapping(
+    State(service): State<Arc<ResourceService>>,
+    Path(scope): Path<String>,
+) -> Response {
+    match service.delete_scope_mapping(&scope).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => resource_error_response(e),
     }

@@ -10,13 +10,14 @@
 //       Metaform Systems, Inc. - initial API and implementation
 //
 
-use super::{ResourceError, ResourceMapping, ResourceStore};
+use super::{MappingPair, ResourceError, ResourceMapping, ResourceStore, ScopeMapping};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 struct InnerStore {
     entries: HashMap<(String, String), ResourceMapping>,
+    scope_mappings: HashMap<String, ScopeMapping>,
 }
 
 /// In-memory resource store for testing and development.
@@ -29,6 +30,7 @@ impl MemoryResourceStore {
         Self {
             store: RwLock::new(InnerStore {
                 entries: HashMap::new(),
+                scope_mappings: HashMap::new(),
             }),
         }
     }
@@ -46,12 +48,24 @@ impl ResourceStore for MemoryResourceStore {
         &self,
         client_identifier: &str,
         participant_context: &str,
-    ) -> Result<Option<ResourceMapping>, ResourceError> {
+    ) -> Result<Option<MappingPair>, ResourceError> {
         let store = self.store.read().await;
-        Ok(store
+        let Some(resource_mapping) = store
             .entries
             .get(&(client_identifier.to_string(), participant_context.to_string()))
-            .cloned())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let scope_mappings = resource_mapping
+            .scopes
+            .iter()
+            .filter_map(|s| store.scope_mappings.get(s).map(|m| (s.clone(), m.clone())))
+            .collect();
+        Ok(Some(MappingPair {
+            resource_mapping,
+            scope_mappings,
+        }))
     }
 
     async fn save_mapping(&self, mapping: ResourceMapping) -> Result<(), ResourceError> {
@@ -82,6 +96,27 @@ impl ResourceStore for MemoryResourceStore {
     async fn remove_mappings_for(&self, client_identifier: &str) -> Result<(), ResourceError> {
         let mut store = self.store.write().await;
         store.entries.retain(|(client_id, _), _| client_id != client_identifier);
+        Ok(())
+    }
+
+    async fn save_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError> {
+        let mut store = self.store.write().await;
+        store.scope_mappings.insert(mapping.scope.clone(), mapping);
+        Ok(())
+    }
+
+    async fn update_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError> {
+        let mut store = self.store.write().await;
+        if !store.scope_mappings.contains_key(&mapping.scope) {
+            return Err(ResourceError::NotFound(mapping.scope.clone()));
+        }
+        store.scope_mappings.insert(mapping.scope.clone(), mapping);
+        Ok(())
+    }
+
+    async fn delete_scope_mapping(&self, scope: &str) -> Result<(), ResourceError> {
+        let mut store = self.store.write().await;
+        store.scope_mappings.remove(scope);
         Ok(())
     }
 }

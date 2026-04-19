@@ -8,7 +8,14 @@ use std::process::Command;
 /// Create a bounded ServiceAccount token with the given audience via the TokenRequest API.
 pub fn create_service_account_token(sa: &str, namespace: &str, audience: &str) -> anyhow::Result<String> {
     let output = Command::new("kubectl")
-        .args(["create", "token", sa, "-n", namespace, &format!("--audience={audience}")])
+        .args([
+            "create",
+            "token",
+            sa,
+            "-n",
+            namespace,
+            &format!("--audience={audience}"),
+        ])
         .output()?;
     if !output.status.success() {
         anyhow::bail!("Failed to create token: {}", String::from_utf8_lossy(&output.stderr));

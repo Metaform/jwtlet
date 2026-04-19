@@ -19,7 +19,9 @@ use axum::extract::{Form, State};
 use axum::http::StatusCode;
 use dsdk_facet_core::context::ParticipantContext;
 use dsdk_facet_core::jwt::{JwtGenerationError, JwtGenerator, JwtVerificationError, JwtVerifier, TokenClaims};
-use jwtlet_core::resource::{ResourceError, ResourceMapping, ResourceService, ResourceStore};
+use jwtlet_core::resource::{
+    MappingPair, ResourceError, ResourceMapping, ResourceService, ResourceStore, ScopeMapping,
+};
 use jwtlet_core::token::TokenExchangeService;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -88,7 +90,11 @@ async fn exchange_token_returns_500_for_generation_error() {
 
 #[tokio::test]
 async fn exchange_token_parses_scope_as_space_separated_list() {
-    let service = make_service(ok_verifier(), ok_generator(), mapping_store(mapping(&["read", "write"])));
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping(&["read", "write"])),
+    );
     let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write")))).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -120,7 +126,11 @@ fn make_service(verifier: StubVerifier, generator: StubGenerator, store: StubSto
         .audience(TOKEN_AUDIENCE)
         .verifier(Box::new(verifier))
         .generator(Box::new(generator))
-        .resource_service(ResourceService::builder().store(Arc::new(store) as Arc<dyn ResourceStore>).build())
+        .resource_service(
+            ResourceService::builder()
+                .store(Arc::new(store) as Arc<dyn ResourceStore>)
+                .build(),
+        )
         .build()
 }
 
@@ -129,7 +139,9 @@ fn ok_verifier() -> StubVerifier {
 }
 
 fn err_verifier() -> StubVerifier {
-    StubVerifier(Box::new(|| Err(JwtVerificationError::VerificationFailed("bad token".into()))))
+    StubVerifier(Box::new(|| {
+        Err(JwtVerificationError::VerificationFailed("bad token".into()))
+    }))
 }
 
 fn ok_generator() -> StubGenerator {
@@ -137,11 +149,18 @@ fn ok_generator() -> StubGenerator {
 }
 
 fn err_generator() -> StubGenerator {
-    StubGenerator(Box::new(|_| Err(JwtGenerationError::GenerationError("vault error".into()))))
+    StubGenerator(Box::new(|_| {
+        Err(JwtGenerationError::GenerationError("vault error".into()))
+    }))
 }
 
 fn mapping_store(m: ResourceMapping) -> StubStore {
-    StubStore(Box::new(move || Ok(Some(m.clone()))))
+    StubStore(Box::new(move || {
+        Ok(Some(MappingPair {
+            resource_mapping: m.clone(),
+            scope_mappings: std::collections::HashMap::new(),
+        }))
+    }))
 }
 
 fn empty_store() -> StubStore {
@@ -149,7 +168,9 @@ fn empty_store() -> StubStore {
 }
 
 fn err_store() -> StubStore {
-    StubStore(Box::new(|| Err(ResourceError::DatabaseError("connection failed".into()))))
+    StubStore(Box::new(|| {
+        Err(ResourceError::DatabaseError("connection failed".into()))
+    }))
 }
 
 fn client_claims() -> TokenClaims {
@@ -187,15 +208,33 @@ impl JwtGenerator for StubGenerator {
     }
 }
 
-struct StubStore(Box<dyn Fn() -> Result<Option<ResourceMapping>, ResourceError> + Send + Sync>);
+struct StubStore(Box<dyn Fn() -> Result<Option<MappingPair>, ResourceError> + Send + Sync>);
 
 #[async_trait]
 impl ResourceStore for StubStore {
-    async fn resolve_mapping(&self, _: &str, _: &str) -> Result<Option<ResourceMapping>, ResourceError> {
+    async fn resolve_mapping(&self, _: &str, _: &str) -> Result<Option<MappingPair>, ResourceError> {
         (self.0)()
     }
-    async fn save_mapping(&self, _: ResourceMapping) -> Result<(), ResourceError> { unimplemented!() }
-    async fn update_mapping(&self, _: ResourceMapping) -> Result<(), ResourceError> { unimplemented!() }
-    async fn remove_mapping(&self, _: &str, _: &str) -> Result<(), ResourceError> { unimplemented!() }
-    async fn remove_mappings_for(&self, _: &str) -> Result<(), ResourceError> { unimplemented!() }
+    async fn save_mapping(&self, _: ResourceMapping) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+    async fn update_mapping(&self, _: ResourceMapping) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+    async fn remove_mapping(&self, _: &str, _: &str) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+    async fn remove_mappings_for(&self, _: &str) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+
+    async fn save_scope_mapping(&self, _: ScopeMapping) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+    async fn update_scope_mapping(&self, _: ScopeMapping) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
+    async fn delete_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
+        unimplemented!()
+    }
 }

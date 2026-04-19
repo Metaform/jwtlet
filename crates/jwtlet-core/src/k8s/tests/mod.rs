@@ -83,9 +83,7 @@ async fn verify_token_fails_when_not_authenticated() {
         .await;
 
     let v = make_verifier(&server, &token_file).await;
-    let Err(JwtVerificationError::VerificationFailed(msg)) =
-        v.verify_token(AUDIENCE, SUBJECT_TOKEN).await
-    else {
+    let Err(JwtVerificationError::VerificationFailed(msg)) = v.verify_token(AUDIENCE, SUBJECT_TOKEN).await else {
         panic!("expected VerificationFailed");
     };
     assert!(msg.contains("token has expired"), "unexpected message: {msg}");
@@ -162,9 +160,7 @@ async fn verify_token_fails_before_initialize() {
         .cluster_issuer(CLUSTER_ISSUER)
         .build();
 
-    let Err(JwtVerificationError::VerificationFailed(msg)) =
-        v.verify_token(AUDIENCE, SUBJECT_TOKEN).await
-    else {
+    let Err(JwtVerificationError::VerificationFailed(msg)) = v.verify_token(AUDIENCE, SUBJECT_TOKEN).await else {
         panic!("expected VerificationFailed");
     };
     assert!(msg.contains("not initialized"), "unexpected message: {msg}");

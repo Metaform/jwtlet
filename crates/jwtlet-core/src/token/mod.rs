@@ -53,19 +53,19 @@ impl TokenExchangeService {
             .await?;
         let client_id = client_claims.sub.as_str();
 
-        match self
+        let verification = match self
             .resource_service
             .verify(client_id, participant_context, scopes)
             .await
         {
-            Ok(true) => {}
-            Ok(false) => return Err(ExchangeError::Unauthorized),
+            Ok(r) if r.verified => r,
+            Ok(_) => return Err(ExchangeError::Unauthorized),
             Err(e) => return Err(ExchangeError::ServiceError(e)),
-        }
+        };
 
-        // Set the actor claim
-        let mut actor_claim = serde_json::Map::new();
-        actor_claim.insert(
+        let mut custom = serde_json::Map::new();
+        custom.extend(verification.claims.into_iter().map(|(k, v)| (k, v)));
+        custom.insert(
             "act".to_string(),
             json!({
                 "sub": client_claims.sub,
@@ -77,7 +77,7 @@ impl TokenExchangeService {
             .sub(participant_context)
             .aud(self.audience.as_str())
             .exp(Utc::now().timestamp() + self.token_ttl_secs)
-            .custom(actor_claim)
+            .custom(custom)
             .build();
 
         let jwtlet_pc = &ParticipantContext::builder()

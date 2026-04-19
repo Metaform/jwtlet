@@ -18,8 +18,8 @@ use dsdk_facet_core::jwt::JwtVerificationError;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 fn write_token_file(content: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("jwtlet-renewal-test-{}.token", uuid::Uuid::new_v4()));
