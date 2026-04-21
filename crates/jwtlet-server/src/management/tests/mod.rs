@@ -400,6 +400,32 @@ async fn returns_200_with_uppercase_bearer_scheme() {
     assert_eq!(response.status(), StatusCode::CREATED);
 }
 
+#[tokio::test]
+async fn create_scope_with_reserved_claim_returns_400() {
+    let router = make_router();
+    let body = json!({ "scope": "read", "claims": { "sub": "injected" } });
+    let response = post_scope(&router, body).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn update_scope_with_reserved_claim_returns_400() {
+    let router = make_router();
+    post_scope(&router, scope_mapping_json("read")).await;
+
+    let body = json!({ "scope": "read", "claims": { "iss": "evil.example.com" } });
+    let response = put_scope(&router, "read", body).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn create_scope_with_non_reserved_claims_returns_201() {
+    let router = make_router();
+    let body = json!({ "scope": "read", "claims": { "role": "reader", "department": "eng" } });
+    let response = post_scope(&router, body).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
 // ============================================================================
 // H3 — DatabaseError body is not exposed
 // ============================================================================

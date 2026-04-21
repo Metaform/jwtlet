@@ -54,6 +54,20 @@ pub enum ResourceError {
 
     #[error("Scope claim key conflict: {0}")]
     ClaimConflict(String),
+
+    #[error("Reserved JWT claim key used in scope mapping: {0}")]
+    ReservedClaim(String),
+}
+
+const RESERVED_CLAIMS: &[&str] = &["sub", "iss", "aud", "exp", "iat", "nbf", "act", "jti"];
+
+fn validate_scope_claims(claims: &Map<String, Value>) -> Result<(), ResourceError> {
+    for key in claims.keys() {
+        if RESERVED_CLAIMS.contains(&key.as_str()) {
+            return Err(ResourceError::ReservedClaim(key.clone()));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Builder, Debug, Clone, Serialize, Deserialize)]
@@ -155,10 +169,12 @@ impl ResourceService {
     }
 
     pub async fn save_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError> {
+        validate_scope_claims(&mapping.claims)?;
         self.store.save_scope_mapping(mapping).await
     }
 
     pub async fn update_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError> {
+        validate_scope_claims(&mapping.claims)?;
         self.store.update_scope_mapping(mapping).await
     }
 

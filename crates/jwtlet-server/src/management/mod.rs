@@ -160,6 +160,10 @@ fn resource_error_response(err: ResourceError) -> Response {
     match err {
         ResourceError::NotFound(_) => StatusCode::NOT_FOUND.into_response(),
         ResourceError::Conflict(_) => StatusCode::CONFLICT.into_response(),
+        ResourceError::ReservedClaim(key) => {
+            (StatusCode::BAD_REQUEST, format!("Claim key '{key}' is reserved and cannot be set via scope mapping"))
+                .into_response()
+        }
         ResourceError::DatabaseError(msg) => {
             tracing::error!("Storage error: {msg}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
