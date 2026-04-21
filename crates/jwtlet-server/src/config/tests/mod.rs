@@ -40,6 +40,7 @@ fn valid_config() -> JwtletConfig {
             token: Some("root".to_string()),
             token_file: None,
         },
+        service_accounts: Default::default(),
     }
 }
 

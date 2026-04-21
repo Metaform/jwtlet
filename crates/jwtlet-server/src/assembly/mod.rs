@@ -11,13 +11,15 @@
 //
 
 use crate::config::{JwtletConfig, K8sConfig, StorageBackend, VAULT_TOKEN_TEMP_FILE, VaultConfig};
-use dsdk_facet_core::jwt::{JwkSetProvider, JwtGenerator, VaultJwtGenerator, VaultVerificationKeyResolver};
+use dsdk_facet_core::jwt::{JwkSetProvider, JwtGenerator, JwtVerifier, VaultJwtGenerator, VaultVerificationKeyResolver};
 use dsdk_facet_core::vault::VaultSigningClient;
 use dsdk_facet_hashicorp_vault::{HashicorpVaultClient, HashicorpVaultConfig, VaultAuthConfig};
 use jwtlet_core::k8s::K8sTokenReviewVerifier;
 use jwtlet_core::resource::mem::MemoryResourceStore;
 use jwtlet_core::resource::{ResourceService, ResourceStore};
+use jwtlet_core::saccount::{MemoryServiceAccountStore, ServiceAccount, ServiceAccountAuthorizer};
 use jwtlet_core::token::TokenExchangeService;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
@@ -42,6 +44,12 @@ pub struct JwtletRuntime {
     pub resource_service: Arc<ResourceService>,
     /// Provides the JWKS endpoint with Vault-backed public keys for token verification.
     pub key_resolver: Arc<dyn JwkSetProvider>,
+    /// Authorizes management API requests against a set of service accounts and roles.
+    pub service_account_authorizer: Arc<dyn ServiceAccountAuthorizer>,
+    /// Verifies incoming Bearer tokens on the management API.
+    pub management_verifier: Arc<dyn JwtVerifier>,
+    /// Audience used when verifying management Bearer tokens via K8s TokenReview.
+    pub management_client_audience: String,
 }
 
 // ============================================================================
@@ -96,11 +104,13 @@ pub async fn assemble_postgres(cfg: &JwtletConfig) -> Result<JwtletRuntime, Jwtl
 async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Result<JwtletRuntime, JwtletError> {
     // The signing key in Vault is named "{prefix}-{participant_context_claim}" — matching
     // how VaultJwtGenerator derives the key and how configure-vault.sh provisions it.
-    let signing_key_name = format!("{}-{}", DEFAULT_SIGNING_KEY_PREFIX, config.token.participant_context_claim);
+    let signing_key_name = format!(
+        "{}-{}",
+        DEFAULT_SIGNING_KEY_PREFIX, config.token.participant_context_claim
+    );
     let vault_client = create_vault_client(&config.vault, &signing_key_name).await?;
     let key_resolver = create_key_resolver(vault_client.clone()).await?;
     let jwt_generator = create_jwt_generator(vault_client, DEFAULT_SIGNING_KEY_PREFIX);
-    let verifier = create_k8s_verifier(&config.k8s).await?;
 
     let exchange_resource_service = build_resource_service(store.clone());
     let management_resource_service = Arc::new(build_resource_service(store));
@@ -118,20 +128,26 @@ async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Resul
 
     let token_service = Arc::new(
         TokenExchangeService::builder()
-            .client_audience(client_audience)
+            .client_audience(client_audience.clone())
             .audience(audience)
             .jwtlet_participant_context(config.token.participant_context_claim.clone())
             .token_ttl_secs(config.token.token_ttl_secs)
-            .verifier(Box::new(verifier))
+            .verifier(Box::new(create_k8s_verifier(&config.k8s).await?))
             .resource_service(exchange_resource_service)
             .generator(jwt_generator)
             .build(),
     );
 
+    let service_account_authorizer = build_service_account_authorizer(&config.service_accounts);
+    let management_verifier: Arc<dyn JwtVerifier> = Arc::new(create_k8s_verifier(&config.k8s).await?);
+
     Ok(JwtletRuntime {
         token_service,
         resource_service: management_resource_service,
         key_resolver,
+        service_account_authorizer,
+        management_verifier,
+        management_client_audience: client_audience,
     })
 }
 
@@ -143,7 +159,19 @@ fn build_resource_service(store: Arc<dyn ResourceStore>) -> ResourceService {
     ResourceService::builder().store(store).build()
 }
 
-async fn create_key_resolver(vault_client: Arc<dyn VaultSigningClient>) -> Result<Arc<dyn JwkSetProvider>, JwtletError> {
+fn build_service_account_authorizer(accounts: &HashMap<String, Vec<String>>) -> Arc<dyn ServiceAccountAuthorizer> {
+    let iter = accounts.iter().map(|(id, roles)| {
+        ServiceAccount::builder()
+            .client_id(id.clone())
+            .roles(roles.iter().cloned().collect())
+            .build()
+    });
+    Arc::new(MemoryServiceAccountStore::from_accounts(iter))
+}
+
+async fn create_key_resolver(
+    vault_client: Arc<dyn VaultSigningClient>,
+) -> Result<Arc<dyn JwkSetProvider>, JwtletError> {
     let resolver = VaultVerificationKeyResolver::builder()
         .vault_client(vault_client)
         .build();
@@ -194,7 +222,10 @@ async fn create_k8s_verifier(cfg: &K8sConfig) -> Result<K8sTokenReviewVerifier, 
     Ok(verifier)
 }
 
-async fn create_vault_client(cfg: &VaultConfig, signing_key_name: &str) -> Result<Arc<dyn VaultSigningClient>, JwtletError> {
+async fn create_vault_client(
+    cfg: &VaultConfig,
+    signing_key_name: &str,
+) -> Result<Arc<dyn VaultSigningClient>, JwtletError> {
     let vault_url = cfg
         .url
         .as_ref()

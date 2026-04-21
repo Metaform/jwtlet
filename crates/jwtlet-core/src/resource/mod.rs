@@ -92,10 +92,16 @@ impl ResourceService {
             .resolve_mapping(client_identifier, participant_context)
             .await?
         else {
-            return Ok(VerificationResult { verified: false, claims: HashMap::new() });
+            return Ok(VerificationResult {
+                verified: false,
+                claims: HashMap::new(),
+            });
         };
         if !scopes.iter().all(|s| pair.resource_mapping.scopes.contains(s)) {
-            return Ok(VerificationResult { verified: false, claims: HashMap::new() });
+            return Ok(VerificationResult {
+                verified: false,
+                claims: HashMap::new(),
+            });
         }
         let claims = scopes
             .iter()

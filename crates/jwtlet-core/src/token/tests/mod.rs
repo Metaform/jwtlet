@@ -119,7 +119,10 @@ async fn exchange_token_includes_claims_from_scope_mappings() {
     let mut scope_mappings = HashMap::new();
     scope_mappings.insert(
         "read".to_string(),
-        ScopeMapping::builder().scope("read".to_string()).claims(scope_claims).build(),
+        ScopeMapping::builder()
+            .scope("read".to_string())
+            .claims(scope_claims)
+            .build(),
     );
 
     make_service(

@@ -98,14 +98,24 @@ async fn verify_populates_claims_from_scope_mappings() {
     let mut read_claims = Map::new();
     read_claims.insert("role".to_string(), Value::String("reader".to_string()));
     service
-        .save_scope_mapping(ScopeMapping::builder().scope("read".to_string()).claims(read_claims).build())
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("read".to_string())
+                .claims(read_claims)
+                .build(),
+        )
         .await
         .unwrap();
 
     let mut write_claims = Map::new();
     write_claims.insert("level".to_string(), Value::String("editor".to_string()));
     service
-        .save_scope_mapping(ScopeMapping::builder().scope("write".to_string()).claims(write_claims).build())
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("write".to_string())
+                .claims(write_claims)
+                .build(),
+        )
         .await
         .unwrap();
 

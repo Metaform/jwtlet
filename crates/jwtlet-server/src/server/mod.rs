@@ -12,14 +12,15 @@
 
 use crate::config::JwtletConfig;
 use crate::exchange::{get_swk_set, token_exchange};
-use crate::management::management_routes;
+use crate::management::{ManagementState, management_routes};
 use axum::{
     Router,
     extract::FromRef,
     routing::{get, post},
 };
-use dsdk_facet_core::jwt::JwkSetProvider;
+use dsdk_facet_core::jwt::{JwkSetProvider, JwtVerifier};
 use jwtlet_core::resource::ResourceService;
+use jwtlet_core::saccount::ServiceAccountAuthorizer;
 use jwtlet_core::token::TokenExchangeService;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -48,6 +49,9 @@ pub async fn run_server(
     token_service: Arc<TokenExchangeService>,
     resource_service: Arc<ResourceService>,
     key_resolver: Arc<dyn JwkSetProvider>,
+    service_account_authorizer: Arc<dyn ServiceAccountAuthorizer>,
+    management_verifier: Arc<dyn JwtVerifier>,
+    management_client_audience: String,
 ) -> Result<(), ServerError> {
     let cancel_token = CancellationToken::new();
     let mut join_set: JoinSet<Result<(), ServerError>> = JoinSet::new();
@@ -60,10 +64,17 @@ pub async fn run_server(
         cancel_token.clone(),
     ));
 
+    let management_state = ManagementState {
+        resource_service,
+        authorizer: service_account_authorizer,
+        verifier: management_verifier,
+        client_audience: management_client_audience,
+    };
+
     join_set.spawn(run_management_api(
         config.bind.clone(),
         config.management_port,
-        resource_service,
+        management_state,
         cancel_token.clone(),
     ));
 
@@ -96,7 +107,10 @@ async fn run_token_exchange_api(
     let listener = TcpListener::bind(&addr).await?;
     info!("Token exchange API listening on {addr}");
 
-    let state = ExchangeApiState { token_service: service, key_resolver };
+    let state = ExchangeApiState {
+        token_service: service,
+        key_resolver,
+    };
     let app = Router::new()
         .route("/health", get(health))
         .route("/token", post(token_exchange))
@@ -114,7 +128,7 @@ async fn run_token_exchange_api(
 async fn run_management_api(
     bind: IpAddr,
     port: u16,
-    service: Arc<ResourceService>,
+    state: ManagementState,
     cancel: CancellationToken,
 ) -> Result<(), ServerError> {
     let addr = format!("{bind}:{port}");
@@ -123,8 +137,7 @@ async fn run_management_api(
 
     let app = Router::new()
         .route("/health", get(health))
-        .nest("/api/v1", management_routes())
-        .with_state(service)
+        .nest("/api/v1", management_routes(state))
         .layer(TraceLayer::new_for_http());
 
     axum::serve(listener, app)

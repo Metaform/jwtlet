@@ -12,6 +12,7 @@
 
 use config::{Config, Environment, File};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
@@ -139,6 +140,8 @@ pub struct JwtletConfig {
     pub token: TokenConfig,
     #[serde(default)]
     pub vault: VaultConfig,
+    #[serde(default)]
+    pub service_accounts: HashMap<String, Vec<String>>,
 }
 
 impl Default for JwtletConfig {
@@ -151,6 +154,7 @@ impl Default for JwtletConfig {
             k8s: K8sConfig::default(),
             token: TokenConfig::default(),
             vault: VaultConfig::default(),
+            service_accounts: HashMap::new(),
         }
     }
 }

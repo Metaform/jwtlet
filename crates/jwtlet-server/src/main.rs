@@ -50,7 +50,15 @@ async fn run(config: JwtletConfig) -> anyhow::Result<()> {
         StorageBackend::Postgres { .. } => assemble_postgres(&config).await?,
     };
 
-    run_server(config, runtime.token_service, runtime.resource_service, runtime.key_resolver)
-        .await
-        .map_err(Into::into)
+    run_server(
+        config,
+        runtime.token_service,
+        runtime.resource_service,
+        runtime.key_resolver,
+        runtime.service_account_authorizer,
+        runtime.management_verifier,
+        runtime.management_client_audience,
+    )
+    .await
+    .map_err(Into::into)
 }

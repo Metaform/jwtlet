@@ -22,3 +22,6 @@ data:
     [vault]
     url        = "http://vault:8200"
     token_file = "/vault/secrets/.vault-token"
+
+    [service_accounts]
+    "system:serviceaccount:vault-e2e-test:test-app-sa" = ["management:write"]

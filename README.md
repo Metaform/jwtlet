@@ -94,6 +94,27 @@ token_ttl_secs = 3600         # default
 url = "http://vault:8200"           # required
 token_file = "/vault/secrets/.vault-token" # use token_file in production
 # token    = "s.xxxxx"                     # or a literal token for development
+
+# Management API authorization
+# Keys are Kubernetes service account identifiers; values are lists of roles.
+# A caller must hold the "management:write" role to use any management endpoint.
+[service_accounts]
+"system:serviceaccount:my-namespace:my-sa" = ["management:write"]
+```
+
+### Management API Authentication
+
+All management API endpoints (`/api/v1/mappings`, `/api/v1/scopes`) require a
+`Authorization: Bearer <token>` header. The token must be a valid Kubernetes service
+account token issued with the same audience as `token.client_audience`. Jwtlet
+verifies the token via the Kubernetes TokenReview API and checks that the resolved
+service account identity holds the `management:write` role.
+
+To obtain a suitable token from within a cluster:
+
+```bash
+kubectl create token my-sa -n my-namespace \
+  --audience=https://kubernetes.default.svc.cluster.local
 ```
 
 ### Logging
