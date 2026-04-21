@@ -11,7 +11,9 @@
 //
 
 use crate::config::{JwtletConfig, K8sConfig, StorageBackend, VAULT_TOKEN_TEMP_FILE, VaultConfig};
-use dsdk_facet_core::jwt::{JwkSetProvider, JwtGenerator, JwtVerifier, VaultJwtGenerator, VaultVerificationKeyResolver};
+use dsdk_facet_core::jwt::{
+    JwkSetProvider, JwtGenerator, JwtVerifier, VaultJwtGenerator, VaultVerificationKeyResolver,
+};
 use dsdk_facet_core::vault::VaultSigningClient;
 use dsdk_facet_hashicorp_vault::{HashicorpVaultClient, HashicorpVaultConfig, VaultAuthConfig};
 use jwtlet_core::k8s::K8sTokenReviewVerifier;

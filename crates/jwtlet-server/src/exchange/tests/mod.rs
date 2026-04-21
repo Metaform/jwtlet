@@ -112,11 +112,16 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
 }
 
 fn form(scope: Option<&str>) -> TokenExchangeForm {
+    form_with_audience(scope, None)
+}
+
+fn form_with_audience(scope: Option<&str>, audience: Option<&str>) -> TokenExchangeForm {
     TokenExchangeForm {
         grant_type: TOKEN_EXCHANGE_GRANT_TYPE.to_string(),
         subject_token: "input.jwt.token".to_string(),
         resource: PARTICIPANT_CONTEXT.to_string(),
         scope: scope.map(str::to_string),
+        audience: audience.map(str::to_string),
     }
 }
 
@@ -188,6 +193,77 @@ fn mapping(scopes: &[&str]) -> ResourceMapping {
         .participant_context(PARTICIPANT_CONTEXT.to_string())
         .scopes(scopes.iter().map(|s| s.to_string()).collect::<HashSet<_>>())
         .build()
+}
+
+fn mapping_with_audiences(scopes: &[&str], audiences: &[&str]) -> ResourceMapping {
+    ResourceMapping::builder()
+        .client_identifier("system:serviceaccount:default:test-sa".to_string())
+        .participant_context(PARTICIPANT_CONTEXT.to_string())
+        .scopes(scopes.iter().map(|s| s.to_string()).collect::<HashSet<_>>())
+        .audiences(audiences.iter().map(|a| a.to_string()).collect::<HashSet<_>>())
+        .build()
+}
+
+#[tokio::test]
+async fn exchange_token_returns_200_when_requested_audience_is_in_allowlist() {
+    let alt = "https://other-service.example.com";
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE, alt])),
+    );
+    let response = token_exchange(
+        State(Arc::new(service)),
+        Form(form_with_audience(Some("read"), Some(alt))),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn exchange_token_returns_403_when_audience_not_in_allowlist() {
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE])),
+    );
+    let response = token_exchange(
+        State(Arc::new(service)),
+        Form(form_with_audience(
+            Some("read"),
+            Some("https://not-allowed.example.com"),
+        )),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = json_body(response).await;
+    assert_eq!(body["error"], "unauthorized_client");
+}
+
+#[tokio::test]
+async fn exchange_token_returns_200_when_no_audience_requested_and_allowlist_set() {
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE])),
+    );
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read")))).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn exchange_token_returns_403_when_no_allowlist_and_non_default_audience_requested() {
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping(&["read"])), // empty audiences
+    );
+    let response = token_exchange(
+        State(Arc::new(service)),
+        Form(form_with_audience(Some("read"), Some("https://other.example.com"))),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 struct StubVerifier(Box<dyn Fn() -> Result<TokenClaims, JwtVerificationError> + Send + Sync>);

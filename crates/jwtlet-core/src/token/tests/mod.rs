@@ -23,14 +23,19 @@ use std::sync::{Arc, Mutex};
 
 const CLIENT_AUDIENCE: &str = "https://kubernetes.default.svc";
 const TOKEN_AUDIENCE: &str = "https://my-service.example.com";
+const ALT_AUDIENCE: &str = "https://other-service.example.com";
 const PARTICIPANT_CONTEXT: &str = "test-context";
 const CLIENT_SUB: &str = "system:serviceaccount:default:test-sa";
 const CLIENT_ISS: &str = "https://kubernetes.default.svc";
 
+// ============================================================================
+// Existing exchange_token tests (audience = None — unchanged behaviour)
+// ============================================================================
+
 #[tokio::test]
 async fn exchange_token_returns_generated_token_on_success() {
     let result = make_service(ok_verifier(), ok_generator(), mapping_store(mapping(&["read"])))
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert_eq!(result.unwrap(), "generated.jwt.token");
 }
@@ -38,7 +43,7 @@ async fn exchange_token_returns_generated_token_on_success() {
 #[tokio::test]
 async fn exchange_token_returns_unauthorized_when_no_mapping_found() {
     let result = make_service(ok_verifier(), ok_generator(), empty_store())
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert!(matches!(result, Err(ExchangeError::Unauthorized)));
 }
@@ -46,7 +51,7 @@ async fn exchange_token_returns_unauthorized_when_no_mapping_found() {
 #[tokio::test]
 async fn exchange_token_returns_unauthorized_when_scope_not_granted() {
     let result = make_service(ok_verifier(), ok_generator(), mapping_store(mapping(&["write"])))
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert!(matches!(result, Err(ExchangeError::Unauthorized)));
 }
@@ -54,7 +59,7 @@ async fn exchange_token_returns_unauthorized_when_scope_not_granted() {
 #[tokio::test]
 async fn exchange_token_propagates_verification_error() {
     let result = make_service(err_verifier(), ok_generator(), empty_store())
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert!(matches!(result, Err(ExchangeError::TokenVerification(_))));
 }
@@ -62,7 +67,7 @@ async fn exchange_token_propagates_verification_error() {
 #[tokio::test]
 async fn exchange_token_propagates_store_error() {
     let result = make_service(ok_verifier(), ok_generator(), err_store())
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert!(matches!(result, Err(ExchangeError::ServiceError(_))));
 }
@@ -70,7 +75,7 @@ async fn exchange_token_propagates_store_error() {
 #[tokio::test]
 async fn exchange_token_propagates_generation_error() {
     let result = make_service(ok_verifier(), err_generator(), mapping_store(mapping(&["read"])))
-        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+        .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
         .await;
     assert!(matches!(result, Err(ExchangeError::Generation(_))));
 }
@@ -83,7 +88,7 @@ async fn exchange_token_sets_participant_context_as_sub_and_configured_audience(
         capturing_generator(Arc::clone(&sink)),
         mapping_store(mapping(&["read"])),
     )
-    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
     .await
     .unwrap();
 
@@ -100,7 +105,7 @@ async fn exchange_token_includes_actor_claim_with_client_sub_and_iss() {
         capturing_generator(Arc::clone(&sink)),
         mapping_store(mapping(&["read"])),
     )
-    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
     .await
     .unwrap();
 
@@ -130,13 +135,158 @@ async fn exchange_token_includes_claims_from_scope_mappings() {
         capturing_generator(Arc::clone(&sink)),
         mapping_store_with_scopes(mapping(&["read"]), scope_mappings),
     )
-    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token")
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
     .await
     .unwrap();
 
     let claims = sink.lock().unwrap().take().unwrap();
     assert_eq!(claims.custom["role"], Value::String("editor".to_string()));
 }
+
+// ============================================================================
+// Audience selection tests
+// ============================================================================
+
+#[tokio::test]
+async fn exchange_token_uses_default_audience_when_none_requested() {
+    let sink = Arc::new(Mutex::new(None));
+    make_service(
+        ok_verifier(),
+        capturing_generator(Arc::clone(&sink)),
+        mapping_store(mapping_with_audiences(&["read"], &[ALT_AUDIENCE])),
+    )
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
+    .await
+    .unwrap();
+
+    let claims = sink.lock().unwrap().take().unwrap();
+    assert_eq!(claims.aud, TOKEN_AUDIENCE);
+}
+
+#[tokio::test]
+async fn exchange_token_uses_requested_audience_when_in_allowlist() {
+    let sink = Arc::new(Mutex::new(None));
+    make_service(
+        ok_verifier(),
+        capturing_generator(Arc::clone(&sink)),
+        mapping_store(mapping_with_audiences(&["read"], &[ALT_AUDIENCE, TOKEN_AUDIENCE])),
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string()],
+        "input-token",
+        Some(ALT_AUDIENCE.to_string()),
+    )
+    .await
+    .unwrap();
+
+    let claims = sink.lock().unwrap().take().unwrap();
+    assert_eq!(claims.aud, ALT_AUDIENCE);
+}
+
+#[tokio::test]
+async fn exchange_token_returns_unauthorized_when_audience_not_in_allowlist() {
+    let result = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE])),
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string()],
+        "input-token",
+        Some("https://not-allowed.example.com".to_string()),
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeError::Unauthorized)));
+}
+
+#[tokio::test]
+async fn exchange_token_returns_unauthorized_when_no_allowlist_and_non_default_audience_requested() {
+    let result = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping(&["read"])), // empty audiences
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string()],
+        "input-token",
+        Some(ALT_AUDIENCE.to_string()),
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeError::Unauthorized)));
+}
+
+#[tokio::test]
+async fn exchange_token_allows_explicit_default_audience_when_no_allowlist() {
+    let sink = Arc::new(Mutex::new(None));
+    make_service(
+        ok_verifier(),
+        capturing_generator(Arc::clone(&sink)),
+        mapping_store(mapping(&["read"])), // empty audiences — only default valid
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string()],
+        "input-token",
+        Some(TOKEN_AUDIENCE.to_string()), // explicitly requesting the default
+    )
+    .await
+    .unwrap();
+
+    let claims = sink.lock().unwrap().take().unwrap();
+    assert_eq!(claims.aud, TOKEN_AUDIENCE);
+}
+
+#[tokio::test]
+async fn exchange_token_allows_any_audience_from_multi_entry_allowlist() {
+    let audiences = &[TOKEN_AUDIENCE, ALT_AUDIENCE, "https://third.example.com"];
+    let m = mapping_with_audiences(&["read"], audiences);
+
+    for &expected in audiences {
+        let sink = Arc::new(Mutex::new(None));
+        make_service(
+            ok_verifier(),
+            capturing_generator(Arc::clone(&sink)),
+            mapping_store(m.clone()),
+        )
+        .exchange_token(
+            PARTICIPANT_CONTEXT,
+            vec!["read".to_string()],
+            "input-token",
+            Some(expected.to_string()),
+        )
+        .await
+        .unwrap();
+
+        let claims = sink.lock().unwrap().take().unwrap();
+        assert_eq!(claims.aud, expected, "expected aud={expected}");
+    }
+}
+
+#[tokio::test]
+async fn exchange_token_unauthorized_audience_does_not_leak_token() {
+    // Even with a valid scope+mapping, an invalid audience must yield Unauthorized,
+    // not a generated token.
+    let result = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE])),
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string()],
+        "input-token",
+        Some("https://attacker.example.com".to_string()),
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeError::Unauthorized)));
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 struct StubVerifier(Box<dyn Fn() -> Result<TokenClaims, JwtVerificationError> + Send + Sync>);
 
@@ -206,7 +356,6 @@ fn err_generator() -> StubGenerator {
     }))
 }
 
-/// Generator that captures the claims it receives so the test can inspect them.
 fn capturing_generator(sink: Arc<Mutex<Option<TokenClaims>>>) -> StubGenerator {
     StubGenerator(Box::new(move |claims| {
         *sink.lock().unwrap() = Some(claims);
@@ -251,6 +400,15 @@ fn mapping(scopes: &[&str]) -> ResourceMapping {
         .client_identifier(CLIENT_SUB.to_string())
         .participant_context(PARTICIPANT_CONTEXT.to_string())
         .scopes(scopes.iter().map(|s| s.to_string()).collect::<HashSet<_>>())
+        .build()
+}
+
+fn mapping_with_audiences(scopes: &[&str], audiences: &[&str]) -> ResourceMapping {
+    ResourceMapping::builder()
+        .client_identifier(CLIENT_SUB.to_string())
+        .participant_context(PARTICIPANT_CONTEXT.to_string())
+        .scopes(scopes.iter().map(|s| s.to_string()).collect::<HashSet<_>>())
+        .audiences(audiences.iter().map(|a| a.to_string()).collect::<HashSet<_>>())
         .build()
 }
 

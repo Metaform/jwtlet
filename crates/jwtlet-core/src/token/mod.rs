@@ -19,6 +19,7 @@ use chrono::Utc;
 use dsdk_facet_core::context::ParticipantContext;
 use dsdk_facet_core::jwt::{JwtGenerationError, JwtGenerator, JwtVerificationError, JwtVerifier, TokenClaims};
 use serde_json::json;
+use std::collections::HashSet;
 use thiserror::Error;
 
 #[derive(Builder)]
@@ -46,6 +47,7 @@ impl TokenExchangeService {
         participant_context: &str,
         scopes: Vec<String>,
         auth_token: &str,
+        audience: Option<String>,
     ) -> Result<String, ExchangeError> {
         let client_claims = self
             .verifier
@@ -63,6 +65,8 @@ impl TokenExchangeService {
             Err(e) => return Err(ExchangeError::ServiceError(e)),
         };
 
+        let aud = resolve_audience(audience, &verification.audiences, &self.audience)?;
+
         let mut custom = serde_json::Map::new();
         custom.extend(verification.claims.into_iter().map(|(k, v)| (k, v)));
         custom.insert(
@@ -75,7 +79,7 @@ impl TokenExchangeService {
 
         let participant_claims = TokenClaims::builder()
             .sub(participant_context)
-            .aud(self.audience.as_str())
+            .aud(aud.as_str())
             .exp(Utc::now().timestamp() + self.token_ttl_secs)
             .custom(custom)
             .build();
@@ -85,6 +89,25 @@ impl TokenExchangeService {
             .build();
         let token = self.generator.generate_token(jwtlet_pc, participant_claims).await?;
         Ok(token)
+    }
+}
+
+/// Resolves the audience for the issued token.
+///
+/// - No requested audience → global default.
+/// - Requested audience + empty allowlist → only the global default is valid.
+/// - Requested audience + non-empty allowlist → must be present in the set.
+fn resolve_audience(
+    requested: Option<String>,
+    allowed: &HashSet<String>,
+    default: &str,
+) -> Result<String, ExchangeError> {
+    match requested {
+        None => Ok(default.to_string()),
+        Some(req) if allowed.is_empty() && req == default => Ok(req),
+        Some(_) if allowed.is_empty() => Err(ExchangeError::Unauthorized),
+        Some(req) if allowed.contains(&req) => Ok(req),
+        Some(_) => Err(ExchangeError::Unauthorized),
     }
 }
 

@@ -36,6 +36,10 @@ pub struct TokenExchangeForm {
     resource: String,
     #[serde(default)]
     scope: Option<String>,
+    /// Optional RFC 8693 audience parameter. Must be present in the mapping's
+    /// audience allowlist; falls back to the server default when absent.
+    #[serde(default)]
+    audience: Option<String>,
 }
 
 /// RFC 8693 token exchange response.
@@ -77,7 +81,7 @@ pub async fn token_exchange(
         .collect();
 
     match service
-        .exchange_token(&form.resource, scopes, &form.subject_token)
+        .exchange_token(&form.resource, scopes, &form.subject_token, form.audience)
         .await
     {
         Ok(token) => (

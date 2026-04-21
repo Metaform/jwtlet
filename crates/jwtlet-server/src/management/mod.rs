@@ -55,11 +55,7 @@ pub fn management_routes(state: ManagementState) -> Router {
         .with_state(state.resource_service)
 }
 
-async fn authorize(
-    State(state): State<ManagementState>,
-    request: Request,
-    next: Next,
-) -> Response {
+async fn authorize(State(state): State<ManagementState>, request: Request, next: Next) -> Response {
     let token = match extract_bearer_token(request.headers()) {
         Some(t) => t.to_owned(),
         None => return StatusCode::UNAUTHORIZED.into_response(),

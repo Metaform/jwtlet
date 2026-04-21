@@ -84,10 +84,15 @@ fn make_router() -> Router {
     make_router_with_auth(ok_verifier(), authorized())
 }
 
-fn make_router_with_auth(verifier: impl JwtVerifier + 'static, authorizer: impl ServiceAccountAuthorizer + 'static) -> Router {
-    let resource_service = Arc::new(ResourceService::builder()
-        .store(Arc::new(MemoryResourceStore::new()))
-        .build());
+fn make_router_with_auth(
+    verifier: impl JwtVerifier + 'static,
+    authorizer: impl ServiceAccountAuthorizer + 'static,
+) -> Router {
+    let resource_service = Arc::new(
+        ResourceService::builder()
+            .store(Arc::new(MemoryResourceStore::new()))
+            .build(),
+    );
     let state = ManagementState {
         resource_service,
         authorizer: Arc::new(authorizer),

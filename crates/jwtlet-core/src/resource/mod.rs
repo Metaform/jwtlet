@@ -56,6 +56,11 @@ pub struct ResourceMapping {
     pub client_identifier: String,
     pub participant_context: String,
     pub scopes: HashSet<String>,
+    /// Permitted audiences for issued tokens. Empty means only the global server
+    /// default audience is valid; callers may not request an alternative.
+    #[builder(default)]
+    #[serde(default)]
+    pub audiences: HashSet<String>,
 }
 
 #[derive(Builder, Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +83,8 @@ pub struct ResourceService {
 pub struct VerificationResult {
     pub verified: bool,
     pub claims: HashMap<String, Value>,
+    /// Propagated from the matching `ResourceMapping.audiences`.
+    pub audiences: HashSet<String>,
 }
 
 impl ResourceService {
@@ -95,12 +102,14 @@ impl ResourceService {
             return Ok(VerificationResult {
                 verified: false,
                 claims: HashMap::new(),
+                audiences: HashSet::new(),
             });
         };
         if !scopes.iter().all(|s| pair.resource_mapping.scopes.contains(s)) {
             return Ok(VerificationResult {
                 verified: false,
                 claims: HashMap::new(),
+                audiences: HashSet::new(),
             });
         }
         let claims = scopes
@@ -108,7 +117,11 @@ impl ResourceService {
             .filter_map(|s| pair.scope_mappings.get(s))
             .flat_map(|sm| sm.claims.iter().map(|(k, v)| (k.clone(), v.clone())))
             .collect();
-        Ok(VerificationResult { verified: true, claims })
+        Ok(VerificationResult {
+            verified: true,
+            claims,
+            audiences: pair.resource_mapping.audiences.clone(),
+        })
     }
 
     pub async fn save(&self, mapping: ResourceMapping) -> Result<(), ResourceError> {
