@@ -11,12 +11,14 @@
 //
 
 use crate::config::JwtletConfig;
-use crate::exchange::token_exchange;
+use crate::exchange::{get_swk_set, token_exchange};
 use crate::management::management_routes;
 use axum::{
     Router,
+    extract::FromRef,
     routing::{get, post},
 };
+use dsdk_facet_core::jwt::JwkSetProvider;
 use jwtlet_core::resource::ResourceService;
 use jwtlet_core::token::TokenExchangeService;
 use std::net::IpAddr;
@@ -29,6 +31,12 @@ use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
+#[derive(Clone, FromRef)]
+struct ExchangeApiState {
+    token_service: Arc<TokenExchangeService>,
+    key_resolver: Arc<dyn JwkSetProvider>,
+}
+
 #[derive(Debug, Error)]
 pub enum ServerError {
     #[error("IO error: {0}")]
@@ -39,6 +47,7 @@ pub async fn run_server(
     config: JwtletConfig,
     token_service: Arc<TokenExchangeService>,
     resource_service: Arc<ResourceService>,
+    key_resolver: Arc<dyn JwkSetProvider>,
 ) -> Result<(), ServerError> {
     let cancel_token = CancellationToken::new();
     let mut join_set: JoinSet<Result<(), ServerError>> = JoinSet::new();
@@ -47,6 +56,7 @@ pub async fn run_server(
         config.bind.clone(),
         config.token_exchange_port,
         token_service,
+        key_resolver,
         cancel_token.clone(),
     ));
 
@@ -79,16 +89,19 @@ async fn run_token_exchange_api(
     bind: IpAddr,
     port: u16,
     service: Arc<TokenExchangeService>,
+    key_resolver: Arc<dyn JwkSetProvider>,
     cancel: CancellationToken,
 ) -> Result<(), ServerError> {
     let addr = format!("{bind}:{port}");
     let listener = TcpListener::bind(&addr).await?;
     info!("Token exchange API listening on {addr}");
 
+    let state = ExchangeApiState { token_service: service, key_resolver };
     let app = Router::new()
         .route("/health", get(health))
         .route("/token", post(token_exchange))
-        .with_state(service)
+        .route("/.well-known/jwks.json", get(get_swk_set))
+        .with_state(state)
         .layer(TraceLayer::new_for_http());
 
     axum::serve(listener, app)

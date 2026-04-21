@@ -11,7 +11,7 @@
 //
 
 use crate::config::{JwtletConfig, K8sConfig, StorageBackend, VAULT_TOKEN_TEMP_FILE, VaultConfig};
-use dsdk_facet_core::jwt::{JwtGenerator, VaultJwtGenerator};
+use dsdk_facet_core::jwt::{JwkSetProvider, JwtGenerator, VaultJwtGenerator, VaultVerificationKeyResolver};
 use dsdk_facet_core::vault::VaultSigningClient;
 use dsdk_facet_hashicorp_vault::{HashicorpVaultClient, HashicorpVaultConfig, VaultAuthConfig};
 use jwtlet_core::k8s::K8sTokenReviewVerifier;
@@ -40,6 +40,8 @@ pub struct JwtletRuntime {
     pub token_service: Arc<TokenExchangeService>,
     /// Manages resource mappings; shared with `token_service` via the underlying store.
     pub resource_service: Arc<ResourceService>,
+    /// Provides the JWKS endpoint with Vault-backed public keys for token verification.
+    pub key_resolver: Arc<dyn JwkSetProvider>,
 }
 
 // ============================================================================
@@ -55,7 +57,7 @@ pub enum JwtletError {
     Vault(Box<dyn std::error::Error + Send + Sync>),
 
     #[error("K8s verifier error: {0}")]
-    K8s(dsdk_facet_core::jwt::JwtVerificationError),
+    Verifier(dsdk_facet_core::jwt::JwtVerificationError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -92,7 +94,11 @@ pub async fn assemble_postgres(cfg: &JwtletConfig) -> Result<JwtletRuntime, Jwtl
 // ============================================================================
 
 async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Result<JwtletRuntime, JwtletError> {
-    let vault_client = create_vault_client(&config.vault).await?;
+    // The signing key in Vault is named "{prefix}-{participant_context_claim}" — matching
+    // how VaultJwtGenerator derives the key and how configure-vault.sh provisions it.
+    let signing_key_name = format!("{}-{}", DEFAULT_SIGNING_KEY_PREFIX, config.token.participant_context_claim);
+    let vault_client = create_vault_client(&config.vault, &signing_key_name).await?;
+    let key_resolver = create_key_resolver(vault_client.clone()).await?;
     let jwt_generator = create_jwt_generator(vault_client, DEFAULT_SIGNING_KEY_PREFIX);
     let verifier = create_k8s_verifier(&config.k8s).await?;
 
@@ -125,6 +131,7 @@ async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Resul
     Ok(JwtletRuntime {
         token_service,
         resource_service: management_resource_service,
+        key_resolver,
     })
 }
 
@@ -134,6 +141,14 @@ async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Resul
 
 fn build_resource_service(store: Arc<dyn ResourceStore>) -> ResourceService {
     ResourceService::builder().store(store).build()
+}
+
+async fn create_key_resolver(vault_client: Arc<dyn VaultSigningClient>) -> Result<Arc<dyn JwkSetProvider>, JwtletError> {
+    let resolver = VaultVerificationKeyResolver::builder()
+        .vault_client(vault_client)
+        .build();
+    resolver.initialize().await.map_err(JwtletError::Verifier)?;
+    Ok(Arc::new(resolver))
 }
 
 fn create_jwt_generator(vault_client: Arc<dyn VaultSigningClient>, prefix: &str) -> Box<dyn JwtGenerator> {
@@ -175,11 +190,11 @@ async fn create_k8s_verifier(cfg: &K8sConfig) -> Result<K8sTokenReviewVerifier, 
         .client(client)
         .build();
 
-    verifier.initialize().await.map_err(JwtletError::K8s)?;
+    verifier.initialize().await.map_err(JwtletError::Verifier)?;
     Ok(verifier)
 }
 
-async fn create_vault_client(cfg: &VaultConfig) -> Result<Arc<dyn VaultSigningClient>, JwtletError> {
+async fn create_vault_client(cfg: &VaultConfig, signing_key_name: &str) -> Result<Arc<dyn VaultSigningClient>, JwtletError> {
     let vault_url = cfg
         .url
         .as_ref()
@@ -205,6 +220,7 @@ async fn create_vault_client(cfg: &VaultConfig) -> Result<Arc<dyn VaultSigningCl
         .auth_config(VaultAuthConfig::KubernetesServiceAccount {
             token_file_path: token_file,
         })
+        .signing_key_name(signing_key_name.to_string())
         .build();
 
     let mut client = HashicorpVaultClient::new(vault_cfg).map_err(|e| JwtletError::Vault(Box::new(e)))?;

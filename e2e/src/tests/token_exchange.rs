@@ -19,6 +19,8 @@ const PARTICIPANT_CONTEXT: &str = "test-context";
 const SA_NAME: &str = "test-app-sa";
 // subject_token audience must match jwtlet's token.client_audience config
 const CLIENT_AUDIENCE: &str = "https://kubernetes.default.svc.cluster.local";
+// issued token audience, matches token.audience in jwtlet-config.yaml
+const TOKEN_AUDIENCE: &str = "jwtlet-e2e";
 
 #[tokio::test]
 #[cfg_attr(not(feature = "e2e"), ignore)]
@@ -110,6 +112,71 @@ async fn test_token_exchange_unauthorized() -> anyhow::Result<()> {
 
     // Expect 403 Forbidden for unmapped context
     assert_eq!(resp.status().as_u16(), 403, "expected 403 for unauthorized context");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg_attr(not(feature = "e2e"), ignore)]
+async fn test_token_jwks_verification() -> anyhow::Result<()> {
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+
+    crate::utils::verify_e2e_setup().await?;
+
+    let jwtlet = ensure_jwtlet_deployed().await?;
+    let client = reqwest::Client::new();
+
+    let token_url = format!("http://127.0.0.1:{}", jwtlet.token_exchange_port);
+    let mgmt_url = format!("http://127.0.0.1:{}", jwtlet.management_port);
+    let namespace = crate::utils::E2E_NAMESPACE;
+    let client_identifier = format!("system:serviceaccount:{namespace}:{SA_NAME}");
+
+    // Register the SA → participant context mapping (idempotent — may already exist from another test)
+    let mapping = json!({
+        "clientIdentifier": client_identifier,
+        "participantContext": PARTICIPANT_CONTEXT,
+        "scopes": ["read"]
+    });
+    let status = client
+        .post(format!("{mgmt_url}/api/v1/mappings"))
+        .json(&mapping)
+        .send()
+        .await?
+        .status()
+        .as_u16();
+    assert!(status == 201 || status == 409, "create mapping failed: {status}");
+
+    // Get a bounded SA token and exchange it for a jwtlet-issued token
+    let sa_token = crate::utils::create_service_account_token(SA_NAME, namespace, CLIENT_AUDIENCE)?;
+    let params = [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+        ("subject_token", sa_token.as_str()),
+        ("resource", PARTICIPANT_CONTEXT),
+        ("scope", "read"),
+    ];
+    let resp = client.post(format!("{token_url}/token")).form(&params).send().await?;
+    assert!(resp.status().is_success(), "token exchange failed: {}", resp.status());
+    let body: Value = resp.json().await?;
+    let access_token = body["access_token"].as_str().expect("missing access_token").to_string();
+
+    // Fetch the JWKS from the server
+    let resp = client.get(format!("{token_url}/.well-known/jwks.json")).send().await?;
+    assert!(resp.status().is_success(), "JWKS fetch failed: {}", resp.status());
+    let jwks: jsonwebtoken::jwk::JwkSet = resp.json().await?;
+    assert!(!jwks.keys.is_empty(), "JWKS contains no keys");
+
+    // Identify the signing key via the token's kid header and verify the signature
+    let header = decode_header(&access_token)?;
+    let kid = header.kid.expect("issued token has no kid header");
+    let jwk = jwks.find(&kid).expect("kid from token not found in JWKS");
+    let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+    let mut validation = Validation::new(Algorithm::EdDSA);
+    validation.set_audience(&[TOKEN_AUDIENCE]);
+    let token_data = decode::<Value>(&access_token, &decoding_key, &validation)?;
+
+    assert!(token_data.claims["sub"].is_string(), "missing sub claim");
+    assert!(token_data.claims["exp"].is_number(), "missing exp claim");
 
     Ok(())
 }

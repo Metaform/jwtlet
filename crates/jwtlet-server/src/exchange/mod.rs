@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use dsdk_facet_core::jwt::JwkSetProvider;
 use jwtlet_core::token::{ExchangeError, TokenExchangeService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -53,6 +54,10 @@ struct OAuthErrorResponse {
     error: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_description: Option<String>,
+}
+
+pub async fn get_swk_set(State(resolver): State<Arc<dyn JwkSetProvider>>) -> impl IntoResponse {
+    Json(resolver.jwk_set().await)
 }
 
 pub async fn token_exchange(
