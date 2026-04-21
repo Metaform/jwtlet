@@ -81,7 +81,10 @@ fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|v| {
+            let lower = v.to_ascii_lowercase();
+            lower.strip_prefix("bearer ").map(|_| &v["bearer ".len()..])
+        })
 }
 
 async fn create_mapping(State(service): State<Arc<ResourceService>>, Json(mapping): Json<ResourceMapping>) -> Response {
@@ -93,9 +96,12 @@ async fn create_mapping(State(service): State<Arc<ResourceService>>, Json(mappin
 
 async fn update_mapping(
     State(service): State<Arc<ResourceService>>,
-    Path((_client_id, _context)): Path<(String, String)>,
+    Path((client_id, context)): Path<(String, String)>,
     Json(mapping): Json<ResourceMapping>,
 ) -> Response {
+    if client_id != mapping.client_identifier || context != mapping.participant_context {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     match service.update(mapping).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => resource_error_response(e),
@@ -153,6 +159,11 @@ async fn delete_scope_mapping(State(service): State<Arc<ResourceService>>, Path(
 fn resource_error_response(err: ResourceError) -> Response {
     match err {
         ResourceError::NotFound(_) => StatusCode::NOT_FOUND.into_response(),
-        ResourceError::DatabaseError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
+        ResourceError::Conflict(_) => StatusCode::CONFLICT.into_response(),
+        ResourceError::DatabaseError(msg) => {
+            tracing::error!("Storage error: {msg}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        ResourceError::ClaimConflict(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

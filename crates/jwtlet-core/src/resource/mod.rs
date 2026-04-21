@@ -48,6 +48,12 @@ pub enum ResourceError {
 
     #[error("Mapping not found for client: {0}")]
     NotFound(String),
+
+    #[error("Mapping already exists for client: {0}")]
+    Conflict(String),
+
+    #[error("Scope claim key conflict: {0}")]
+    ClaimConflict(String),
 }
 
 #[derive(Builder, Debug, Clone, Serialize, Deserialize)]
@@ -112,11 +118,19 @@ impl ResourceService {
                 audiences: HashSet::new(),
             });
         }
-        let claims = scopes
-            .iter()
-            .filter_map(|s| pair.scope_mappings.get(s))
-            .flat_map(|sm| sm.claims.iter().map(|(k, v)| (k.clone(), v.clone())))
-            .collect();
+        let mut claims: HashMap<String, Value> = HashMap::new();
+        for s in &scopes {
+            if let Some(sm) = pair.scope_mappings.get(s) {
+                for (k, v) in &sm.claims {
+                    if claims.contains_key(k) {
+                        return Err(ResourceError::ClaimConflict(format!(
+                            "claim key '{k}' is defined by multiple requested scopes"
+                        )));
+                    }
+                    claims.insert(k.clone(), v.clone());
+                }
+            }
+        }
         Ok(VerificationResult {
             verified: true,
             claims,

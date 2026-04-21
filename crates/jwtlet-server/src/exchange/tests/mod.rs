@@ -23,7 +23,7 @@ use jwtlet_core::resource::{
     MappingPair, ResourceError, ResourceMapping, ResourceService, ResourceStore, ScopeMapping,
 };
 use jwtlet_core::token::TokenExchangeService;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const CLIENT_AUDIENCE: &str = "https://kubernetes.default.svc";
@@ -264,6 +264,56 @@ async fn exchange_token_returns_403_when_no_allowlist_and_non_default_audience_r
     )
     .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn exchange_token_returns_no_error_description_on_token_verification_failure() {
+    let service = make_service(err_verifier(), ok_generator(), empty_store());
+    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert_eq!(body["error"], "invalid_grant");
+    assert!(
+        body["error_description"].is_null(),
+        "error_description must not be present"
+    );
+}
+
+#[tokio::test]
+async fn exchange_token_returns_400_for_scope_claim_conflict() {
+    let mut read_claims = serde_json::Map::new();
+    read_claims.insert("role".to_string(), serde_json::Value::String("reader".to_string()));
+    let mut write_claims = serde_json::Map::new();
+    write_claims.insert("role".to_string(), serde_json::Value::String("writer".to_string()));
+    let mut scope_mappings = HashMap::new();
+    scope_mappings.insert(
+        "read".to_string(),
+        ScopeMapping::builder()
+            .scope("read".to_string())
+            .claims(read_claims)
+            .build(),
+    );
+    scope_mappings.insert(
+        "write".to_string(),
+        ScopeMapping::builder()
+            .scope("write".to_string())
+            .claims(write_claims)
+            .build(),
+    );
+    let service = make_service(
+        ok_verifier(),
+        ok_generator(),
+        StubStore(Box::new(move || {
+            Ok(Some(MappingPair {
+                resource_mapping: mapping(&["read", "write"]),
+                scope_mappings: scope_mappings.clone(),
+            }))
+        })),
+    );
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write")))).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert_eq!(body["error"], "invalid_scope");
 }
 
 struct StubVerifier(Box<dyn Fn() -> Result<TokenClaims, JwtVerificationError> + Send + Sync>);

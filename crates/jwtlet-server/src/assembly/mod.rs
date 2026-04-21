@@ -10,7 +10,7 @@
 //       Metaform Systems, Inc. - initial API and implementation
 //
 
-use crate::config::{JwtletConfig, K8sConfig, StorageBackend, VAULT_TOKEN_TEMP_FILE, VaultConfig};
+use crate::config::{JwtletConfig, K8sConfig, StorageBackend, VaultConfig};
 use dsdk_facet_core::jwt::{
     JwkSetProvider, JwtGenerator, JwtVerifier, VaultJwtGenerator, VaultVerificationKeyResolver,
 };
@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
-
+use tracing::warn;
 // ============================================================================
 // Constants
 // ============================================================================
@@ -143,13 +143,28 @@ async fn assemble(config: &JwtletConfig, store: Arc<dyn ResourceStore>) -> Resul
     let service_account_authorizer = build_service_account_authorizer(&config.service_accounts);
     let management_verifier: Arc<dyn JwtVerifier> = Arc::new(create_k8s_verifier(&config.k8s).await?);
 
+    // Use a dedicated management audience if configured; fall back to the exchange audience.
+    let management_client_audience = config
+        .management
+        .client_audience
+        .clone()
+        .unwrap_or_else(|| client_audience.clone());
+
+    if management_client_audience == client_audience {
+        warn!(
+            "management.client_audience is not set or equals token.client_audience — \
+             exchange callers and management callers share the same token audience. \
+             Consider setting management.client_audience to a distinct value."
+        );
+    }
+
     Ok(JwtletRuntime {
         token_service,
         resource_service: management_resource_service,
         key_resolver,
         service_account_authorizer,
         management_verifier,
-        management_client_audience: client_audience,
+        management_client_audience,
     })
 }
 
@@ -162,6 +177,16 @@ fn build_resource_service(store: Arc<dyn ResourceStore>) -> ResourceService {
 }
 
 fn build_service_account_authorizer(accounts: &HashMap<String, Vec<String>>) -> Arc<dyn ServiceAccountAuthorizer> {
+    let has_mgmt_write = accounts
+        .values()
+        .any(|roles| roles.iter().any(|r| r == "management:write"));
+    if !has_mgmt_write {
+        warn!(
+            "No service account with 'management:write' role is configured — \
+             all management API requests will return 403 Forbidden"
+        );
+    }
+
     let iter = accounts.iter().map(|(id, roles)| {
         ServiceAccount::builder()
             .client_id(id.clone())
@@ -236,9 +261,9 @@ async fn create_vault_client(
     let token_file = match (&cfg.token_file, &cfg.token) {
         (Some(path), _) => PathBuf::from(path),
         (None, Some(token)) => {
-            let path = std::env::temp_dir().join(VAULT_TOKEN_TEMP_FILE);
+            let path = std::env::temp_dir().join("jwtlet_vault_token");
             std::fs::write(&path, token)?;
-            tracing::warn!("Using literal vault token from config — do not use in production");
+            warn!("Using literal vault token from config — do not use in production");
             path
         }
         (None, None) => {

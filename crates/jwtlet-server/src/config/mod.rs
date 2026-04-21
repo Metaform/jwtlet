@@ -33,9 +33,6 @@ pub const DEFAULT_PARTICIPANT_CONTEXT_CLAIM: &str = "jwtlet_pc";
 pub const DEFAULT_TOKEN_TTL_SECS: i64 = 3600;
 pub const ENV_CONFIG_FILE: &str = "JWTLET_CONFIG_FILE";
 
-/// Temporary file name used when a literal vault token is provided in config (dev only).
-pub const VAULT_TOKEN_TEMP_FILE: &str = "jwtlet_vault_token";
-
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -96,6 +93,16 @@ impl Default for K8sConfig {
     }
 }
 
+/// Configuration for the management API.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct ManagementConfig {
+    /// Audience used when verifying management API Bearer tokens via K8s TokenReview.
+    /// When absent, falls back to `token.client_audience`. Set this to a dedicated
+    /// audience to cryptographically separate management callers from token-exchange callers.
+    pub client_audience: Option<String>,
+}
+
 /// Configuration for issued JWT tokens.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -142,6 +149,8 @@ pub struct JwtletConfig {
     pub vault: VaultConfig,
     #[serde(default)]
     pub service_accounts: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub management: ManagementConfig,
 }
 
 impl Default for JwtletConfig {
@@ -155,6 +164,7 @@ impl Default for JwtletConfig {
             token: TokenConfig::default(),
             vault: VaultConfig::default(),
             service_accounts: HashMap::new(),
+            management: ManagementConfig::default(),
         }
     }
 }

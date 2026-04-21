@@ -148,12 +148,26 @@ async fn exchange_token_includes_claims_from_scope_mappings() {
 // ============================================================================
 
 #[tokio::test]
-async fn exchange_token_uses_default_audience_when_none_requested() {
+async fn exchange_token_returns_unauthorized_when_audience_omitted_and_not_in_allowlist() {
+    // Allowlist is [ALT_AUDIENCE] which excludes the global default (TOKEN_AUDIENCE).
+    // Omitting the audience param must not silently return the default.
+    let result = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store(mapping_with_audiences(&["read"], &[ALT_AUDIENCE])),
+    )
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
+    .await;
+    assert!(matches!(result, Err(ExchangeError::Unauthorized)));
+}
+
+#[tokio::test]
+async fn exchange_token_uses_default_audience_when_none_requested_and_default_in_allowlist() {
     let sink = Arc::new(Mutex::new(None));
     make_service(
         ok_verifier(),
         capturing_generator(Arc::clone(&sink)),
-        mapping_store(mapping_with_audiences(&["read"], &[ALT_AUDIENCE])),
+        mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE, ALT_AUDIENCE])),
     )
     .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
     .await
@@ -263,6 +277,60 @@ async fn exchange_token_allows_any_audience_from_multi_entry_allowlist() {
         let claims = sink.lock().unwrap().take().unwrap();
         assert_eq!(claims.aud, expected, "expected aud={expected}");
     }
+}
+
+#[tokio::test]
+async fn exchange_token_issued_token_includes_iat_and_nbf() {
+    let sink = Arc::new(Mutex::new(None));
+    make_service(
+        ok_verifier(),
+        capturing_generator(Arc::clone(&sink)),
+        mapping_store(mapping(&["read"])),
+    )
+    .exchange_token(PARTICIPANT_CONTEXT, vec!["read".to_string()], "input-token", None)
+    .await
+    .unwrap();
+
+    let claims = sink.lock().unwrap().take().unwrap();
+    assert!(claims.iat > 0, "iat must be set to a positive timestamp");
+    assert!(claims.nbf.is_some(), "nbf must be present");
+}
+
+#[tokio::test]
+async fn exchange_token_returns_scope_conflict_when_scopes_share_claim_key() {
+    let mut read_claims = serde_json::Map::new();
+    read_claims.insert("role".to_string(), Value::String("reader".to_string()));
+    let mut write_claims = serde_json::Map::new();
+    write_claims.insert("role".to_string(), Value::String("writer".to_string()));
+    let mut scope_mappings = HashMap::new();
+    scope_mappings.insert(
+        "read".to_string(),
+        ScopeMapping::builder()
+            .scope("read".to_string())
+            .claims(read_claims)
+            .build(),
+    );
+    scope_mappings.insert(
+        "write".to_string(),
+        ScopeMapping::builder()
+            .scope("write".to_string())
+            .claims(write_claims)
+            .build(),
+    );
+
+    let result = make_service(
+        ok_verifier(),
+        ok_generator(),
+        mapping_store_with_scopes(mapping(&["read", "write"]), scope_mappings),
+    )
+    .exchange_token(
+        PARTICIPANT_CONTEXT,
+        vec!["read".to_string(), "write".to_string()],
+        "input-token",
+        None,
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeError::ScopeConflict(_))));
 }
 
 #[tokio::test]

@@ -110,7 +110,7 @@ async fn verify_token_retries_on_401_with_refreshed_sa_token() {
     let server = MockServer::start().await;
     let token_file = write_sa_token_file("sa-token");
 
-    // First call: stale SA token → 401 triggers re-read of token file and a retry
+    // First call: stale SA token -> 401 triggers re-read of token file and a retry
     Mock::given(method("POST"))
         .and(path(TOKEN_REVIEW_PATH))
         .respond_with(ResponseTemplate::new(401))

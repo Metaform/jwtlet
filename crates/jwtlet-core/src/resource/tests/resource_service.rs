@@ -11,7 +11,7 @@
 //
 
 use crate::resource::mem::MemoryResourceStore;
-use crate::resource::{ResourceMapping, ResourceService, ScopeMapping};
+use crate::resource::{ResourceError, ResourceMapping, ResourceService, ScopeMapping};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -142,6 +142,85 @@ async fn verify_returns_empty_claims_when_no_scope_mappings_registered() {
         .unwrap();
     assert!(result.verified);
     assert!(result.claims.is_empty());
+}
+
+#[tokio::test]
+async fn verify_returns_error_when_scopes_have_conflicting_claim_keys() {
+    let service = create_service();
+    service
+        .save(create_mapping("client1", "ctx1", &["read", "write"]))
+        .await
+        .unwrap();
+
+    let mut read_claims = Map::new();
+    read_claims.insert("role".to_string(), Value::String("reader".to_string()));
+    service
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("read".to_string())
+                .claims(read_claims)
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    let mut write_claims = Map::new();
+    write_claims.insert("role".to_string(), Value::String("writer".to_string()));
+    service
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("write".to_string())
+                .claims(write_claims)
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .verify("client1", "ctx1", vec!["read".to_string(), "write".to_string()])
+        .await;
+    assert!(matches!(result, Err(ResourceError::ClaimConflict(_))));
+}
+
+#[tokio::test]
+async fn verify_succeeds_when_scopes_have_distinct_claim_keys() {
+    let service = create_service();
+    service
+        .save(create_mapping("client1", "ctx1", &["read", "write"]))
+        .await
+        .unwrap();
+
+    let mut read_claims = Map::new();
+    read_claims.insert("read_role".to_string(), Value::String("reader".to_string()));
+    service
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("read".to_string())
+                .claims(read_claims)
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    let mut write_claims = Map::new();
+    write_claims.insert("write_role".to_string(), Value::String("writer".to_string()));
+    service
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("write".to_string())
+                .claims(write_claims)
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .verify("client1", "ctx1", vec!["read".to_string(), "write".to_string()])
+        .await
+        .unwrap();
+    assert!(result.verified);
+    assert_eq!(result.claims["read_role"], Value::String("reader".to_string()));
+    assert_eq!(result.claims["write_role"], Value::String("writer".to_string()));
 }
 
 fn create_service() -> ResourceService {

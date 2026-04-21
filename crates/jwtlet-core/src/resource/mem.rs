@@ -71,6 +71,9 @@ impl ResourceStore for MemoryResourceStore {
     async fn save_mapping(&self, mapping: ResourceMapping) -> Result<(), ResourceError> {
         let mut store = self.store.write().await;
         let key = (mapping.client_identifier.clone(), mapping.participant_context.clone());
+        if store.entries.contains_key(&key) {
+            return Err(ResourceError::Conflict(mapping.client_identifier.clone()));
+        }
         store.entries.insert(key, mapping);
         Ok(())
     }

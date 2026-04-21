@@ -41,6 +41,7 @@ fn valid_config() -> JwtletConfig {
             token_file: None,
         },
         service_accounts: Default::default(),
+        management: Default::default(),
     }
 }
 

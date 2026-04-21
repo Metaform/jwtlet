@@ -101,10 +101,9 @@ pub async fn token_exchange(
 
 fn exchange_error_response(err: ExchangeError) -> Response {
     match err {
-        ExchangeError::TokenVerification(_) => {
-            oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", Some(err.to_string()))
-        }
+        ExchangeError::TokenVerification(_) => oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", None),
         ExchangeError::Unauthorized => oauth_error(StatusCode::FORBIDDEN, "unauthorized_client", None),
+        ExchangeError::ScopeConflict(_) => oauth_error(StatusCode::BAD_REQUEST, "invalid_scope", None),
         ExchangeError::ServiceError(_) | ExchangeError::Generation(_) => {
             tracing::error!("Token exchange internal error: {err}");
             oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", None)

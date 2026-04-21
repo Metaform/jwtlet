@@ -180,3 +180,25 @@ async fn resolve_mapping_returns_empty_scope_mappings_when_none_registered() {
     let pair = store.resolve_mapping("client1", "ctx1").await.unwrap().unwrap();
     assert!(pair.scope_mappings.is_empty());
 }
+
+#[tokio::test]
+async fn save_mapping_returns_conflict_on_duplicate() {
+    let store = MemoryResourceStore::new();
+    store.save_mapping(mapping("client1", "ctx1", &["read"])).await.unwrap();
+
+    let err = store
+        .save_mapping(mapping("client1", "ctx1", &["write"]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ResourceError::Conflict(_)));
+}
+
+#[tokio::test]
+async fn save_mapping_allows_same_client_in_different_contexts() {
+    let store = MemoryResourceStore::new();
+    store.save_mapping(mapping("client1", "ctx1", &["read"])).await.unwrap();
+    store.save_mapping(mapping("client1", "ctx2", &["read"])).await.unwrap();
+
+    assert!(store.resolve_mapping("client1", "ctx1").await.unwrap().is_some());
+    assert!(store.resolve_mapping("client1", "ctx2").await.unwrap().is_some());
+}

@@ -62,6 +62,7 @@ impl TokenExchangeService {
         {
             Ok(r) if r.verified => r,
             Ok(_) => return Err(ExchangeError::Unauthorized),
+            Err(ResourceError::ClaimConflict(msg)) => return Err(ExchangeError::ScopeConflict(msg)),
             Err(e) => return Err(ExchangeError::ServiceError(e)),
         };
 
@@ -77,10 +78,13 @@ impl TokenExchangeService {
             }),
         );
 
+        let now = Utc::now().timestamp();
         let participant_claims = TokenClaims::builder()
             .sub(participant_context)
             .aud(aud.as_str())
-            .exp(Utc::now().timestamp() + self.token_ttl_secs)
+            .iat(now)
+            .nbf(now)
+            .exp(now + self.token_ttl_secs)
             .custom(custom)
             .build();
 
@@ -94,16 +98,19 @@ impl TokenExchangeService {
 
 /// Resolves the audience for the issued token.
 ///
-/// - No requested audience → global default.
-/// - Requested audience + empty allowlist → only the global default is valid.
-/// - Requested audience + non-empty allowlist → must be present in the set.
+/// - No requested audience + empty allowlist -> global default.
+/// - No requested audience + non-empty allowlist -> only valid if default is in the allowlist.
+/// - Requested audience + empty allowlist -> only the global default is valid.
+/// - Requested audience + non-empty allowlist -> must be present in the set.
 fn resolve_audience(
     requested: Option<String>,
     allowed: &HashSet<String>,
     default: &str,
 ) -> Result<String, ExchangeError> {
     match requested {
-        None => Ok(default.to_string()),
+        None if allowed.is_empty() => Ok(default.to_string()),
+        None if allowed.contains(default) => Ok(default.to_string()),
+        None => Err(ExchangeError::Unauthorized),
         Some(req) if allowed.is_empty() && req == default => Ok(req),
         Some(_) if allowed.is_empty() => Err(ExchangeError::Unauthorized),
         Some(req) if allowed.contains(&req) => Ok(req),
@@ -120,8 +127,17 @@ pub enum ExchangeError {
     Unauthorized,
 
     #[error("Service error: {0}")]
-    ServiceError(#[from] ResourceError),
+    ServiceError(ResourceError),
+
+    #[error("Scope conflict: {0}")]
+    ScopeConflict(String),
 
     #[error("Token generation failed: {0}")]
     Generation(#[from] JwtGenerationError),
+}
+
+impl From<ResourceError> for ExchangeError {
+    fn from(e: ResourceError) -> Self {
+        ExchangeError::ServiceError(e)
+    }
 }

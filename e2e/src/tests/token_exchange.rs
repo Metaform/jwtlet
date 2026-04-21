@@ -53,7 +53,7 @@ async fn test_token_exchange() -> anyhow::Result<()> {
     // Get a management SA token for the management API caller
     let mgmt_token = crate::utils::create_service_account_token(SA_NAME, namespace, CLIENT_AUDIENCE)?;
 
-    // Register the SA → participant context mapping with an audience allowlist
+    // Register the SA -> participant context mapping with an audience allowlist
     let mapping = json!({
         "clientIdentifier": client_identifier,
         "participantContext": PARTICIPANT_CONTEXT,
@@ -182,7 +182,7 @@ async fn test_token_jwks_verification() -> anyhow::Result<()> {
     let namespace = crate::utils::E2E_NAMESPACE;
     let client_identifier = format!("system:serviceaccount:{namespace}:{SA_NAME}");
 
-    // Register the SA → participant context mapping (idempotent — may already exist from another test)
+    // Register the SA -> participant context mapping (idempotent — may already exist from another test)
     let mgmt_token = crate::utils::create_service_account_token(SA_NAME, namespace, CLIENT_AUDIENCE)?;
     let mapping = json!({
         "clientIdentifier": client_identifier,

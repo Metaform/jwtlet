@@ -62,7 +62,7 @@ vexec write auth/kubernetes/role/jwtlet-role \
 vexec secrets enable transit 2>/dev/null || true
 
 # Create Ed25519 signing key used by jwtlet (key name = "{prefix}-{participant_context_claim}")
-# With defaults: prefix="signing", claim="jwtlet_pc" → key="signing-jwtlet_pc"
+# With defaults: prefix="signing", claim="jwtlet_pc" -> key="signing-jwtlet_pc"
 vexec write -f transit/keys/signing-jwtlet_pc type=ed25519 2>/dev/null || true
 
 echo "Vault configuration complete"
