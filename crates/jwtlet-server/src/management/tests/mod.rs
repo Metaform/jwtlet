@@ -334,6 +334,66 @@ async fn post_scope_forbidden_with_only_read_role() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+// ============================================================================
+// R2 — Split write roles: mappings:write and scopes:write are independent
+// ============================================================================
+
+#[tokio::test]
+async fn mappings_write_role_can_create_mapping() {
+    let router = make_router_with_mappings_write();
+    let resp = post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn mappings_write_role_cannot_create_scope() {
+    let router = make_router_with_mappings_write();
+    let resp = post_scope(&router, scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn mappings_write_role_cannot_update_scope() {
+    let router = make_router_with_mappings_write();
+    let resp = put_scope(&router, "read", scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn scopes_write_role_can_create_scope() {
+    let router = make_router_with_scopes_write();
+    let resp = post_scope(&router, scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn scopes_write_role_cannot_create_mapping() {
+    let router = make_router_with_scopes_write();
+    let resp = post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn scopes_write_role_cannot_update_mapping() {
+    let router = make_router_with_scopes_write();
+    let resp = put_mapping(&router, "client1", "ctx1", mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn mappings_write_role_cannot_read_mappings() {
+    let router = make_router_with_mappings_write();
+    let resp = get_mappings(&router).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn scopes_write_role_cannot_read_scopes() {
+    let router = make_router_with_scopes_write();
+    let resp = get_scopes(&router).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 #[tokio::test]
 async fn create_scope_with_reserved_claim_returns_400() {
     let router = make_router();
@@ -609,7 +669,7 @@ fn unauthorized() -> StubAuthorizer {
 fn make_router() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["management:write".to_string()].into())
+        .roles(["mappings:write".to_string(), "scopes:write".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }
@@ -617,7 +677,27 @@ fn make_router() -> Router {
 fn make_router_with_both_roles() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["management:read".to_string(), "management:write".to_string()].into())
+        .roles([
+            "management:read".to_string(),
+            "mappings:write".to_string(),
+            "scopes:write".to_string(),
+        ].into())
+        .build()]);
+    make_router_with_auth(ok_verifier(), authorizer)
+}
+
+fn make_router_with_mappings_write() -> Router {
+    let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
+        .client_id(MGMT_CLIENT_ID)
+        .roles(["mappings:write".to_string()].into())
+        .build()]);
+    make_router_with_auth(ok_verifier(), authorizer)
+}
+
+fn make_router_with_scopes_write() -> Router {
+    let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
+        .client_id(MGMT_CLIENT_ID)
+        .roles(["scopes:write".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }

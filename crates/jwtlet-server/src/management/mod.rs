@@ -13,10 +13,10 @@
 use axum::{
     Extension, Json, Router,
     extract::{Path, Request, State},
-    http::{Method, StatusCode, header},
+    http::{StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{MethodRouter, get, put},
+    routing::{MethodRouter, get, post, put},
 };
 use dsdk_facet_core::jwt::{JwtVerificationError, JwtVerifier};
 use jwtlet_core::resource::{ResourceError, ResourceMapping, ResourceService, ScopeMapping};
@@ -25,9 +25,16 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::info;
 
-/// The authenticated caller's `sub` claim, inserted by the `authorize` middleware.
+/// The authenticated caller's `sub` claim, inserted by the auth middleware.
 #[derive(Clone)]
 struct Actor(String);
+
+/// Bundles `ManagementState` with the single role required for a route group.
+#[derive(Clone)]
+struct AuthState {
+    management: ManagementState,
+    required_role: &'static str,
+}
 
 #[cfg(test)]
 mod tests;
@@ -40,9 +47,20 @@ pub struct ManagementState {
     pub client_audience: String,
 }
 
+pub const ROLE_MANAGEMENT_READ: &str = "management:read";
+pub const ROLE_MAPPINGS_WRITE: &str = "mappings:write";
+pub const ROLE_SCOPES_WRITE: &str = "scopes:write";
+
 pub fn management_routes(state: ManagementState) -> Router {
-    Router::new()
-        .route("/mappings", get(list_mappings).post(create_mapping))
+    let auth = |role| AuthState { management: state.clone(), required_role: role };
+
+    let read_router = Router::new()
+        .route("/mappings", get(list_mappings))
+        .route("/scopes", get(list_scope_mappings))
+        .route_layer(middleware::from_fn_with_state(auth(ROLE_MANAGEMENT_READ), authorize_with_role));
+
+    let mappings_write_router = Router::new()
+        .route("/mappings", post(create_mapping))
         .route(
             "/mappings/{client_id}/{context}",
             put(update_mapping).delete(delete_mapping),
@@ -51,22 +69,29 @@ pub fn management_routes(state: ManagementState) -> Router {
             "/mappings/{client_id}",
             MethodRouter::new().delete(delete_client_mappings),
         )
-        .route("/scopes", get(list_scope_mappings).post(create_scope_mapping))
+        .route_layer(middleware::from_fn_with_state(auth(ROLE_MAPPINGS_WRITE), authorize_with_role));
+
+    let scopes_write_router = Router::new()
+        .route("/scopes", post(create_scope_mapping))
         .route(
             "/scopes/{scope}",
             put(update_scope_mapping).delete(delete_scope_mapping),
         )
-        .route_layer(middleware::from_fn_with_state(state.clone(), authorize))
+        .route_layer(middleware::from_fn_with_state(auth(ROLE_SCOPES_WRITE), authorize_with_role));
+
+    read_router
+        .merge(mappings_write_router)
+        .merge(scopes_write_router)
         .with_state(state.resource_service)
 }
 
-async fn authorize(State(state): State<ManagementState>, request: Request, next: Next) -> Response {
+async fn authorize_with_role(State(auth): State<AuthState>, request: Request, next: Next) -> Response {
     let token = match extract_bearer_token(request.headers()) {
         Some(t) => t.to_owned(),
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    let claims = match state.verifier.verify_token(&state.client_audience, &token).await {
+    let claims = match auth.management.verifier.verify_token(&auth.management.client_audience, &token).await {
         Ok(c) => c,
         Err(JwtVerificationError::VerificationFailed(_) | JwtVerificationError::InvalidSignature) => {
             return StatusCode::UNAUTHORIZED.into_response();
@@ -74,13 +99,7 @@ async fn authorize(State(state): State<ManagementState>, request: Request, next:
         Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    let required = if request.method() == Method::GET {
-        HashSet::from(["management:read"])
-    } else {
-        HashSet::from(["management:write"])
-    };
-
-    match state.authorizer.authorize(&claims.sub, &required).await {
+    match auth.management.authorizer.authorize(&claims.sub, &HashSet::from([auth.required_role])).await {
         Ok(true) => {
             let mut req = request;
             req.extensions_mut().insert(Actor(claims.sub));

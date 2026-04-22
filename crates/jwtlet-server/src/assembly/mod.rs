@@ -177,14 +177,14 @@ fn build_resource_service(store: Arc<dyn ResourceStore>) -> ResourceService {
 }
 
 fn build_service_account_authorizer(accounts: &HashMap<String, Vec<String>>) -> Arc<dyn ServiceAccountAuthorizer> {
-    let has_mgmt_write = accounts
-        .values()
-        .any(|roles| roles.iter().any(|r| r == "management:write"));
-    if !has_mgmt_write {
-        warn!(
-            "No service account with 'management:write' role is configured — \
-             all management API requests will return 403 Forbidden"
-        );
+    let all_roles: Vec<&str> = accounts.values().flat_map(|r| r.iter().map(String::as_str)).collect();
+    for role in &["mappings:write", "scopes:write"] {
+        if !all_roles.contains(role) {
+            warn!(
+                "No service account with '{role}' role is configured — \
+                 those management API routes will return 403 Forbidden"
+            );
+        }
     }
 
     let iter = accounts.iter().map(|(id, roles)| {
