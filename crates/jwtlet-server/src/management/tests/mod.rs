@@ -20,182 +20,15 @@ use axum::{Router, body::Body, body::to_bytes};
 use dsdk_facet_core::jwt::{JwtVerificationError, JwtVerifier, TokenClaims};
 use jwtlet_core::resource::ResourceService;
 use jwtlet_core::resource::mem::MemoryResourceStore;
-use jwtlet_core::saccount::{AuthError, ServiceAccountAuthorizer};
+use jwtlet_core::saccount::{AuthError, MemoryServiceAccountStore, ServiceAccount, ServiceAccountAuthorizer};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tower::ServiceExt;
+use tracing_test::traced_test;
 
 const MGMT_CLIENT_ID: &str = "system:serviceaccount:test:mgmt-sa";
 const MGMT_TOKEN: &str = "valid-mgmt-token";
-
-// ============================================================================
-// Stubs
-// ============================================================================
-
-struct StubVerifier(Box<dyn Fn() -> Result<TokenClaims, JwtVerificationError> + Send + Sync>);
-
-#[async_trait]
-impl JwtVerifier for StubVerifier {
-    async fn verify_token(&self, _: &str, _: &str) -> Result<TokenClaims, JwtVerificationError> {
-        (self.0)()
-    }
-}
-
-struct StubAuthorizer(Box<dyn Fn() -> Result<bool, AuthError> + Send + Sync>);
-
-#[async_trait]
-impl ServiceAccountAuthorizer for StubAuthorizer {
-    async fn authorize(&self, _: &str, _: &HashSet<&str>) -> Result<bool, AuthError> {
-        (self.0)()
-    }
-}
-
-fn ok_verifier() -> StubVerifier {
-    StubVerifier(Box::new(|| {
-        Ok(TokenClaims::builder()
-            .sub(MGMT_CLIENT_ID)
-            .iss("https://kubernetes.default.svc.cluster.local")
-            .aud("test-audience")
-            .exp(9999999999i64)
-            .build())
-    }))
-}
-
-fn err_verifier() -> StubVerifier {
-    StubVerifier(Box::new(|| {
-        Err(JwtVerificationError::VerificationFailed("bad token".into()))
-    }))
-}
-
-fn authorized() -> StubAuthorizer {
-    StubAuthorizer(Box::new(|| Ok(true)))
-}
-
-fn unauthorized() -> StubAuthorizer {
-    StubAuthorizer(Box::new(|| Ok(false)))
-}
-
-// ============================================================================
-// Router helpers
-// ============================================================================
-
-fn make_router() -> Router {
-    make_router_with_auth(ok_verifier(), authorized())
-}
-
-fn make_router_with_auth(
-    verifier: impl JwtVerifier + 'static,
-    authorizer: impl ServiceAccountAuthorizer + 'static,
-) -> Router {
-    let resource_service = Arc::new(
-        ResourceService::builder()
-            .store(Arc::new(MemoryResourceStore::new()))
-            .build(),
-    );
-    let state = ManagementState {
-        resource_service,
-        authorizer: Arc::new(authorizer),
-        verifier: Arc::new(verifier),
-        client_audience: "test-audience".to_string(),
-    };
-    management_routes(state)
-}
-
-fn mapping_json(client_id: &str, context: &str) -> Value {
-    json!({
-        "clientIdentifier": client_id,
-        "participantContext": context,
-        "scopes": ["read"]
-    })
-}
-
-fn scope_mapping_json(scope: &str) -> Value {
-    json!({ "scope": scope, "claims": {} })
-}
-
-fn scope_mapping_with_claims_json(scope: &str, claims: Value) -> Value {
-    json!({ "scope": scope, "claims": claims })
-}
-
-async fn post_mapping(router: &Router, body: Value) -> axum::response::Response {
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/mappings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
-                .body(Body::from(serde_json::to_string(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-async fn put_mapping(router: &Router, client_id: &str, context: &str, body: Value) -> axum::response::Response {
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::PUT)
-                .uri(format!("/mappings/{client_id}/{context}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
-                .body(Body::from(serde_json::to_string(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-async fn post_scope(router: &Router, body: Value) -> axum::response::Response {
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/scopes")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
-                .body(Body::from(serde_json::to_string(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-async fn put_scope(router: &Router, scope: &str, body: Value) -> axum::response::Response {
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::PUT)
-                .uri(format!("/scopes/{scope}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
-                .body(Body::from(serde_json::to_string(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
-
-async fn delete_scope(router: &Router, scope: &str) -> axum::response::Response {
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::DELETE)
-                .uri(format!("/scopes/{scope}"))
-                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-}
 
 // ============================================================================
 // Authorization tests
@@ -361,7 +194,7 @@ async fn update_mapping_returns_400_when_context_mismatches() {
 }
 
 // ============================================================================
-// M3 — Bearer prefix is case-insensitive
+// Bearer prefix is case-insensitive
 // ============================================================================
 
 #[tokio::test]
@@ -400,6 +233,107 @@ async fn returns_200_with_uppercase_bearer_scheme() {
     assert_eq!(response.status(), StatusCode::CREATED);
 }
 
+// ============================================================================
+// GET /mappings and GET /scopes
+// ============================================================================
+
+#[tokio::test]
+async fn list_mappings_returns_200_with_empty_array() {
+    let router = make_router_with_read_role();
+    let resp = get_mappings(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, json!([]));
+}
+
+#[tokio::test]
+async fn list_mappings_returns_saved_mappings() {
+    let router = make_router_with_both_roles();
+    post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    post_mapping(&router, mapping_json("client2", "ctx2")).await;
+
+    let resp = get_mappings(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn list_scopes_returns_200_with_empty_array() {
+    let router = make_router_with_read_role();
+    let resp = get_scopes(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, json!([]));
+}
+
+#[tokio::test]
+async fn list_scopes_returns_saved_scope_mappings() {
+    let router = make_router_with_both_roles();
+    post_scope(&router, scope_mapping_json("read")).await;
+    post_scope(&router, scope_mapping_json("write")).await;
+
+    let resp = get_scopes(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn list_mappings_allowed_with_management_read_role() {
+    let router = make_router_with_read_role();
+    let resp = get_mappings(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_scopes_allowed_with_management_read_role() {
+    let router = make_router_with_read_role();
+    let resp = get_scopes(&router).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_mappings_forbidden_with_only_write_role() {
+    let router = make_router();
+    let resp = get_mappings(&router).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn list_scopes_forbidden_with_only_write_role() {
+    let router = make_router();
+    let resp = get_scopes(&router).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn both_roles_allows_read_and_write() {
+    let router = make_router_with_both_roles();
+    let post_resp = post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    assert_eq!(post_resp.status(), StatusCode::CREATED);
+    let get_resp = get_mappings(&router).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn post_mapping_forbidden_with_only_read_role() {
+    let router = make_router_with_read_role();
+    let resp = post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn post_scope_forbidden_with_only_read_role() {
+    let router = make_router_with_read_role();
+    let resp = post_scope(&router, scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 #[tokio::test]
 async fn create_scope_with_reserved_claim_returns_400() {
     let router = make_router();
@@ -427,7 +361,119 @@ async fn create_scope_with_non_reserved_claims_returns_201() {
 }
 
 // ============================================================================
-// H3 — DatabaseError body is not exposed
+// Audit logging: actor and key fields appear in log output
+// ============================================================================
+
+#[traced_test]
+#[tokio::test]
+async fn create_mapping_logs_actor_client_id_and_context() {
+    let router = make_router();
+    let resp = post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert!(logs_contain("mapping created"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("client1"));
+    assert!(logs_contain("ctx1"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn update_mapping_logs_actor_client_id_and_context() {
+    let router = make_router();
+    post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    let resp = put_mapping(&router, "client1", "ctx1", mapping_json("client1", "ctx1")).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(logs_contain("mapping updated"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("client1"));
+    assert!(logs_contain("ctx1"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn delete_mapping_logs_actor_client_id_and_context() {
+    let router = make_router();
+    post_mapping(&router, mapping_json("client1", "ctx1")).await;
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/mappings/client1/ctx1")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(logs_contain("mapping deleted"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("client1"));
+    assert!(logs_contain("ctx1"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn create_scope_mapping_logs_actor_and_scope() {
+    let router = make_router();
+    let resp = post_scope(&router, scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert!(logs_contain("scope mapping created"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("read"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn update_scope_mapping_logs_actor_and_scope() {
+    let router = make_router();
+    post_scope(&router, scope_mapping_json("read")).await;
+    let resp = put_scope(&router, "read", scope_mapping_json("read")).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(logs_contain("scope mapping updated"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("read"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn delete_scope_mapping_logs_actor_and_scope() {
+    let router = make_router();
+    post_scope(&router, scope_mapping_json("write")).await;
+    let resp = delete_scope(&router, "write").await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(logs_contain("scope mapping deleted"));
+    assert!(logs_contain(MGMT_CLIENT_ID));
+    assert!(logs_contain("write"));
+}
+
+#[traced_test]
+#[tokio::test]
+async fn failed_mutation_does_not_log_success_event() {
+    let router = make_router();
+    // POST to a non-existent mapping update path returns 404 — no success log emitted
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/mappings/ghost/ctx1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::from(
+                    serde_json::to_string(&mapping_json("ghost", "ctx1")).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert!(!logs_contain("mapping updated"));
+}
+
+// ============================================================================
+// DatabaseError body is not exposed
 // ============================================================================
 
 #[tokio::test]
@@ -467,6 +513,12 @@ async fn database_error_does_not_expose_internal_message_in_response_body() {
         async fn delete_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
             unimplemented!()
         }
+        async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {
+            unimplemented!()
+        }
+        async fn list_scope_mappings(&self) -> Result<Vec<jwtlet_core::resource::ScopeMapping>, ResourceError> {
+            unimplemented!()
+        }
     }
 
     let resource_service = Arc::new(
@@ -501,4 +553,222 @@ async fn database_error_does_not_expose_internal_message_in_response_body() {
         !body.contains("secret internal error"),
         "DB error message must not appear in response body"
     );
+}
+
+// ============================================================================
+// Stubs
+// ============================================================================
+
+struct StubVerifier(Box<dyn Fn() -> Result<TokenClaims, JwtVerificationError> + Send + Sync>);
+
+#[async_trait]
+impl JwtVerifier for StubVerifier {
+    async fn verify_token(&self, _: &str, _: &str) -> Result<TokenClaims, JwtVerificationError> {
+        (self.0)()
+    }
+}
+
+struct StubAuthorizer(Box<dyn Fn() -> Result<bool, AuthError> + Send + Sync>);
+
+#[async_trait]
+impl ServiceAccountAuthorizer for StubAuthorizer {
+    async fn authorize(&self, _: &str, _: &HashSet<&str>) -> Result<bool, AuthError> {
+        (self.0)()
+    }
+}
+
+fn ok_verifier() -> StubVerifier {
+    StubVerifier(Box::new(|| {
+        Ok(TokenClaims::builder()
+            .sub(MGMT_CLIENT_ID)
+            .iss("https://kubernetes.default.svc.cluster.local")
+            .aud("test-audience")
+            .exp(9999999999i64)
+            .build())
+    }))
+}
+
+fn err_verifier() -> StubVerifier {
+    StubVerifier(Box::new(|| {
+        Err(JwtVerificationError::VerificationFailed("bad token".into()))
+    }))
+}
+
+fn authorized() -> StubAuthorizer {
+    StubAuthorizer(Box::new(|| Ok(true)))
+}
+
+fn unauthorized() -> StubAuthorizer {
+    StubAuthorizer(Box::new(|| Ok(false)))
+}
+
+// ============================================================================
+// Router helpers
+// ============================================================================
+
+fn make_router() -> Router {
+    let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
+        .client_id(MGMT_CLIENT_ID)
+        .roles(["management:write".to_string()].into())
+        .build()]);
+    make_router_with_auth(ok_verifier(), authorizer)
+}
+
+fn make_router_with_both_roles() -> Router {
+    let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
+        .client_id(MGMT_CLIENT_ID)
+        .roles(["management:read".to_string(), "management:write".to_string()].into())
+        .build()]);
+    make_router_with_auth(ok_verifier(), authorizer)
+}
+
+fn make_router_with_auth(
+    verifier: impl JwtVerifier + 'static,
+    authorizer: impl ServiceAccountAuthorizer + 'static,
+) -> Router {
+    let resource_service = Arc::new(
+        ResourceService::builder()
+            .store(Arc::new(MemoryResourceStore::new()))
+            .build(),
+    );
+    let state = ManagementState {
+        resource_service,
+        authorizer: Arc::new(authorizer),
+        verifier: Arc::new(verifier),
+        client_audience: "test-audience".to_string(),
+    };
+    management_routes(state)
+}
+
+fn mapping_json(client_id: &str, context: &str) -> Value {
+    json!({
+        "clientIdentifier": client_id,
+        "participantContext": context,
+        "scopes": ["read"]
+    })
+}
+
+fn scope_mapping_json(scope: &str) -> Value {
+    json!({ "scope": scope, "claims": {} })
+}
+
+fn scope_mapping_with_claims_json(scope: &str, claims: Value) -> Value {
+    json!({ "scope": scope, "claims": claims })
+}
+
+async fn post_mapping(router: &Router, body: Value) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mappings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn put_mapping(router: &Router, client_id: &str, context: &str, body: Value) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/mappings/{client_id}/{context}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn post_scope(router: &Router, body: Value) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/scopes")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn put_scope(router: &Router, scope: &str, body: Value) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/scopes/{scope}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn get_mappings(router: &Router) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/mappings")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn get_scopes(router: &Router) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/scopes")
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+fn make_router_with_read_role() -> Router {
+    let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
+        .client_id(MGMT_CLIENT_ID)
+        .roles(["management:read".to_string()].into())
+        .build()]);
+    make_router_with_auth(ok_verifier(), authorizer)
+}
+
+async fn delete_scope(router: &Router, scope: &str) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/scopes/{scope}"))
+                .header(header::AUTHORIZATION, format!("Bearer {MGMT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
 }

@@ -28,6 +28,7 @@ jwtlet-core = { workspace = true }
 [dev-dependencies]
 rstest = { workspace = true }
 tokio-test = { workspace = true }
+tracing-test = { workspace = true }
 
 [lints]
 workspace = true

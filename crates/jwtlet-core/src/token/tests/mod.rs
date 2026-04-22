@@ -402,6 +402,12 @@ impl ResourceStore for StubStore {
     async fn delete_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
         unimplemented!()
     }
+    async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {
+        unimplemented!()
+    }
+    async fn list_scope_mappings(&self) -> Result<Vec<ScopeMapping>, ResourceError> {
+        unimplemented!()
+    }
 }
 
 fn ok_verifier() -> StubVerifier {

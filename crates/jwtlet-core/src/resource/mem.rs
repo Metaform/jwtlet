@@ -122,4 +122,14 @@ impl ResourceStore for MemoryResourceStore {
         store.scope_mappings.remove(scope);
         Ok(())
     }
+
+    async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {
+        let store = self.store.read().await;
+        Ok(store.entries.values().cloned().collect())
+    }
+
+    async fn list_scope_mappings(&self) -> Result<Vec<ScopeMapping>, ResourceError> {
+        let store = self.store.read().await;
+        Ok(store.scope_mappings.values().cloned().collect())
+    }
 }
