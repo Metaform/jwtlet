@@ -37,7 +37,7 @@ pub trait ResourceStore: Send + Sync {
 
     async fn save_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError>;
     async fn update_scope_mapping(&self, mapping: ScopeMapping) -> Result<(), ResourceError>;
-    async fn delete_scope_mapping(&self, scope: &str) -> Result<(), ResourceError>;
+    async fn remove_scope_mapping(&self, scope: &str) -> Result<(), ResourceError>;
 
     async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError>;
     async fn list_scope_mappings(&self) -> Result<Vec<ScopeMapping>, ResourceError>;
@@ -182,7 +182,7 @@ impl ResourceService {
     }
 
     pub async fn delete_scope_mapping(&self, scope: &str) -> Result<(), ResourceError> {
-        self.store.delete_scope_mapping(scope).await
+        self.store.remove_scope_mapping(scope).await
     }
 
     pub async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {

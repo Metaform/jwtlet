@@ -360,7 +360,7 @@ impl ResourceStore for StubStore {
     async fn update_scope_mapping(&self, _: ScopeMapping) -> Result<(), ResourceError> {
         unimplemented!()
     }
-    async fn delete_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
+    async fn remove_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
         unimplemented!()
     }
     async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {

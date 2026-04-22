@@ -135,7 +135,7 @@ async fn delete_scope_mapping_removes_entry() {
     let store = MemoryResourceStore::new();
     store.save_scope_mapping(scope_mapping("write")).await.unwrap();
 
-    store.delete_scope_mapping("write").await.unwrap();
+    store.remove_scope_mapping("write").await.unwrap();
 
     let err = store.update_scope_mapping(scope_mapping("write")).await.unwrap_err();
     assert!(matches!(err, ResourceError::NotFound(_)));

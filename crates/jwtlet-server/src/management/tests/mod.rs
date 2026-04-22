@@ -570,7 +570,7 @@ async fn database_error_does_not_expose_internal_message_in_response_body() {
         async fn update_scope_mapping(&self, _: ScopeMapping) -> Result<(), ResourceError> {
             unimplemented!()
         }
-        async fn delete_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
+        async fn remove_scope_mapping(&self, _: &str) -> Result<(), ResourceError> {
             unimplemented!()
         }
         async fn list_mappings(&self) -> Result<Vec<ResourceMapping>, ResourceError> {

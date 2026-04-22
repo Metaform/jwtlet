@@ -117,7 +117,7 @@ impl ResourceStore for MemoryResourceStore {
         Ok(())
     }
 
-    async fn delete_scope_mapping(&self, scope: &str) -> Result<(), ResourceError> {
+    async fn remove_scope_mapping(&self, scope: &str) -> Result<(), ResourceError> {
         let mut store = self.store.write().await;
         store.scope_mappings.remove(scope);
         Ok(())
