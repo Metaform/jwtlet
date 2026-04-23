@@ -257,14 +257,24 @@ async fn update_scope_mapping_rejects_reserved_claims() {
     let mut ok_claims = Map::new();
     ok_claims.insert("role".to_string(), Value::String("reader".to_string()));
     service
-        .save_scope_mapping(ScopeMapping::builder().scope("read".to_string()).claims(ok_claims).build())
+        .save_scope_mapping(
+            ScopeMapping::builder()
+                .scope("read".to_string())
+                .claims(ok_claims)
+                .build(),
+        )
         .await
         .unwrap();
 
     let mut bad_claims = Map::new();
     bad_claims.insert("sub".to_string(), Value::String("injected".to_string()));
     let result = service
-        .update_scope_mapping(ScopeMapping::builder().scope("read".to_string()).claims(bad_claims).build())
+        .update_scope_mapping(
+            ScopeMapping::builder()
+                .scope("read".to_string())
+                .claims(bad_claims)
+                .build(),
+        )
         .await;
     assert!(matches!(result, Err(ResourceError::ReservedClaim(_))));
 }

@@ -669,7 +669,13 @@ fn unauthorized() -> StubAuthorizer {
 fn make_router() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["jwtlet:management:mappings:write".to_string(), "jwtlet:management:scope:write".to_string()].into())
+        .roles(
+            [
+                "jwtlet:management:mappings:write".to_string(),
+                "jwtlet:management:scope:write".to_string(),
+            ]
+            .into(),
+        )
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }
@@ -677,11 +683,14 @@ fn make_router() -> Router {
 fn make_router_with_both_roles() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles([
-            "jwtlet:management:read".to_string(),
-            "jwtlet:management:mappings:write".to_string(),
-            "jwtlet:management:scope:write".to_string(),
-        ].into())
+        .roles(
+            [
+                "jwtlet:management:read".to_string(),
+                "jwtlet:management:mappings:write".to_string(),
+                "jwtlet:management:scope:write".to_string(),
+            ]
+            .into(),
+        )
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }

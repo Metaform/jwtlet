@@ -10,17 +10,19 @@
 //       Metaform Systems, Inc. - initial API and implementation
 //
 
+mod error;
 #[cfg(test)]
 mod tests;
 
+use crate::exchange::error::ExchangeApiError;
 use axum::{
     Json,
     extract::{Form, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
 };
 use dsdk_facet_core::jwt::JwkSetProvider;
-use jwtlet_core::token::{ExchangeError, TokenExchangeService};
+use jwtlet_core::token::TokenExchangeService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -53,13 +55,6 @@ pub struct TokenExchangeResponse {
     scope: Option<String>,
 }
 
-#[derive(Serialize)]
-struct OAuthErrorResponse {
-    error: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_description: Option<String>,
-}
-
 pub async fn get_swk_set(State(resolver): State<Arc<dyn JwkSetProvider>>) -> impl IntoResponse {
     Json(resolver.jwk_set().await)
 }
@@ -67,9 +62,9 @@ pub async fn get_swk_set(State(resolver): State<Arc<dyn JwkSetProvider>>) -> imp
 pub async fn token_exchange(
     State(service): State<Arc<TokenExchangeService>>,
     Form(form): Form<TokenExchangeForm>,
-) -> Response {
+) -> Result<(StatusCode, Json<TokenExchangeResponse>), ExchangeApiError> {
     if form.grant_type != TOKEN_EXCHANGE_GRANT_TYPE {
-        return oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type", None);
+        return Err(ExchangeApiError::UnsupportedGrantType(form.grant_type));
     }
 
     let scopes: Vec<String> = form
@@ -80,44 +75,18 @@ pub async fn token_exchange(
         .map(str::to_string)
         .collect();
 
-    match service
+    let token = service
         .exchange_token(&form.resource, scopes, &form.subject_token, form.audience)
-        .await
-    {
-        Ok(token) => (
-            StatusCode::OK,
-            Json(TokenExchangeResponse {
-                access_token: token,
-                issued_token_type: ISSUED_TOKEN_TYPE,
-                token_type: "Bearer",
-                expires_in: service.token_ttl_secs(),
-                scope: form.scope,
-            }),
-        )
-            .into_response(),
-        Err(e) => exchange_error_response(e),
-    }
-}
+        .await?;
 
-fn exchange_error_response(err: ExchangeError) -> Response {
-    match err {
-        ExchangeError::TokenVerification(_) => oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", None),
-        ExchangeError::Unauthorized => oauth_error(StatusCode::FORBIDDEN, "unauthorized_client", None),
-        ExchangeError::ScopeConflict(_) => oauth_error(StatusCode::BAD_REQUEST, "invalid_scope", None),
-        ExchangeError::ServiceError(_) | ExchangeError::Generation(_) => {
-            tracing::error!("Token exchange internal error: {err}");
-            oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", None)
-        }
-    }
-}
-
-fn oauth_error(status: StatusCode, error: &'static str, description: Option<String>) -> Response {
-    (
-        status,
-        Json(OAuthErrorResponse {
-            error,
-            error_description: description,
+    Ok((
+        StatusCode::OK,
+        Json(TokenExchangeResponse {
+            access_token: token,
+            issued_token_type: ISSUED_TOKEN_TYPE,
+            token_type: "Bearer",
+            expires_in: service.token_ttl_secs(),
+            scope: form.scope,
         }),
-    )
-        .into_response()
+    ))
 }

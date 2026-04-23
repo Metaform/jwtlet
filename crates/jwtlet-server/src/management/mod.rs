@@ -10,6 +10,11 @@
 //       Metaform Systems, Inc. - initial API and implementation
 //
 
+mod error;
+#[cfg(test)]
+mod tests;
+
+use crate::management::error::ManagementApiError;
 use axum::{
     Extension, Json, Router,
     extract::{Path, Request, State},
@@ -19,7 +24,7 @@ use axum::{
     routing::{MethodRouter, get, post, put},
 };
 use dsdk_facet_core::jwt::{JwtVerificationError, JwtVerifier};
-use jwtlet_core::resource::{ResourceError, ResourceMapping, ResourceService, ScopeMapping};
+use jwtlet_core::resource::{ResourceMapping, ResourceService, ScopeMapping};
 use jwtlet_core::saccount::{AuthError, ServiceAccountAuthorizer};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -36,9 +41,6 @@ struct AuthState {
     required_role: &'static str,
 }
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Clone)]
 pub struct ManagementState {
     pub resource_service: Arc<ResourceService>,
@@ -52,12 +54,18 @@ pub const ROLE_MAPPINGS_WRITE: &str = "jwtlet:management:mappings:write";
 pub const ROLE_SCOPES_WRITE: &str = "jwtlet:management:scope:write";
 
 pub fn management_routes(state: ManagementState) -> Router {
-    let auth = |role| AuthState { management: state.clone(), required_role: role };
+    let auth = |role| AuthState {
+        management: state.clone(),
+        required_role: role,
+    };
 
     let read_router = Router::new()
         .route("/mappings", get(list_mappings))
         .route("/scopes", get(list_scope_mappings))
-        .route_layer(middleware::from_fn_with_state(auth(ROLE_MANAGEMENT_READ), authorize_with_role));
+        .route_layer(middleware::from_fn_with_state(
+            auth(ROLE_MANAGEMENT_READ),
+            authorize_with_role,
+        ));
 
     let mappings_write_router = Router::new()
         .route("/mappings", post(create_mapping))
@@ -69,7 +77,10 @@ pub fn management_routes(state: ManagementState) -> Router {
             "/mappings/{client_id}",
             MethodRouter::new().delete(delete_client_mappings),
         )
-        .route_layer(middleware::from_fn_with_state(auth(ROLE_MAPPINGS_WRITE), authorize_with_role));
+        .route_layer(middleware::from_fn_with_state(
+            auth(ROLE_MAPPINGS_WRITE),
+            authorize_with_role,
+        ));
 
     let scopes_write_router = Router::new()
         .route("/scopes", post(create_scope_mapping))
@@ -77,7 +88,10 @@ pub fn management_routes(state: ManagementState) -> Router {
             "/scopes/{scope}",
             put(update_scope_mapping).delete(delete_scope_mapping),
         )
-        .route_layer(middleware::from_fn_with_state(auth(ROLE_SCOPES_WRITE), authorize_with_role));
+        .route_layer(middleware::from_fn_with_state(
+            auth(ROLE_SCOPES_WRITE),
+            authorize_with_role,
+        ));
 
     read_router
         .merge(mappings_write_router)
@@ -91,7 +105,12 @@ async fn authorize_with_role(State(auth): State<AuthState>, request: Request, ne
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    let claims = match auth.management.verifier.verify_token(&auth.management.client_audience, &token).await {
+    let claims = match auth
+        .management
+        .verifier
+        .verify_token(&auth.management.client_audience, &token)
+        .await
+    {
         Ok(c) => c,
         Err(JwtVerificationError::VerificationFailed(_) | JwtVerificationError::InvalidSignature) => {
             return StatusCode::UNAUTHORIZED.into_response();
@@ -99,7 +118,12 @@ async fn authorize_with_role(State(auth): State<AuthState>, request: Request, ne
         Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    match auth.management.authorizer.authorize(&claims.sub, &HashSet::from([auth.required_role])).await {
+    match auth
+        .management
+        .authorizer
+        .authorize(&claims.sub, &HashSet::from([auth.required_role]))
+        .await
+    {
         Ok(true) => {
             let mut req = request;
             req.extensions_mut().insert(Actor(claims.sub));
@@ -120,32 +144,26 @@ fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
         })
 }
 
-async fn list_mappings(State(service): State<Arc<ResourceService>>) -> Response {
-    match service.list_mappings().await {
-        Ok(mappings) => Json(mappings).into_response(),
-        Err(e) => resource_error_response(e),
-    }
+async fn list_mappings(
+    State(service): State<Arc<ResourceService>>,
+) -> Result<Json<Vec<ResourceMapping>>, ManagementApiError> {
+    Ok(Json(service.list_mappings().await?))
 }
 
-async fn list_scope_mappings(State(service): State<Arc<ResourceService>>) -> Response {
-    match service.list_scope_mappings().await {
-        Ok(mappings) => Json(mappings).into_response(),
-        Err(e) => resource_error_response(e),
-    }
+async fn list_scope_mappings(
+    State(service): State<Arc<ResourceService>>,
+) -> Result<Json<Vec<ScopeMapping>>, ManagementApiError> {
+    Ok(Json(service.list_scope_mappings().await?))
 }
 
 async fn create_mapping(
     State(service): State<Arc<ResourceService>>,
     Extension(actor): Extension<Actor>,
     Json(mapping): Json<ResourceMapping>,
-) -> Response {
-    match service.save(mapping.clone()).await {
-        Ok(()) => {
-            info!(actor = %actor.0, client_id = %mapping.client_identifier, context = %mapping.participant_context, "mapping created");
-            StatusCode::CREATED.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.save(mapping.clone()).await?;
+    info!(actor = %actor.0, client_id = %mapping.client_identifier, context = %mapping.participant_context, "mapping created");
+    Ok(StatusCode::CREATED)
 }
 
 async fn update_mapping(
@@ -153,59 +171,43 @@ async fn update_mapping(
     Extension(actor): Extension<Actor>,
     Path((client_id, context)): Path<(String, String)>,
     Json(mapping): Json<ResourceMapping>,
-) -> Response {
+) -> Result<StatusCode, ManagementApiError> {
     if client_id != mapping.client_identifier || context != mapping.participant_context {
-        return StatusCode::BAD_REQUEST.into_response();
+        return Err(ManagementApiError::PathMismatch);
     }
-    match service.update(mapping.clone()).await {
-        Ok(()) => {
-            info!(actor = %actor.0, client_id = %mapping.client_identifier, context = %mapping.participant_context, "mapping updated");
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+    service.update(mapping.clone()).await?;
+    info!(actor = %actor.0, client_id = %mapping.client_identifier, context = %mapping.participant_context, "mapping updated");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_mapping(
     State(service): State<Arc<ResourceService>>,
     Extension(actor): Extension<Actor>,
     Path((client_id, context)): Path<(String, String)>,
-) -> Response {
-    match service.remove(&client_id, &context).await {
-        Ok(()) => {
-            info!(actor = %actor.0, client_id = %client_id, context = %context, "mapping deleted");
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.remove(&client_id, &context).await?;
+    info!(actor = %actor.0, client_id = %client_id, context = %context, "mapping deleted");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_client_mappings(
     State(service): State<Arc<ResourceService>>,
     Extension(actor): Extension<Actor>,
     Path(client_id): Path<String>,
-) -> Response {
-    match service.remove_for(&client_id).await {
-        Ok(()) => {
-            info!(actor = %actor.0, client_id = %client_id, "all mappings deleted for client");
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.remove_for(&client_id).await?;
+    info!(actor = %actor.0, client_id = %client_id, "all mappings deleted for client");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_scope_mapping(
     State(service): State<Arc<ResourceService>>,
     Extension(actor): Extension<Actor>,
     Json(mapping): Json<ScopeMapping>,
-) -> Response {
-    match service.save_scope_mapping(mapping.clone()).await {
-        Ok(()) => {
-            info!(actor = %actor.0, scope = %mapping.scope, "scope mapping created");
-            StatusCode::CREATED.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.save_scope_mapping(mapping.clone()).await?;
+    info!(actor = %actor.0, scope = %mapping.scope, "scope mapping created");
+    Ok(StatusCode::CREATED)
 }
 
 async fn update_scope_mapping(
@@ -213,42 +215,18 @@ async fn update_scope_mapping(
     Extension(actor): Extension<Actor>,
     Path(_scope): Path<String>,
     Json(mapping): Json<ScopeMapping>,
-) -> Response {
-    match service.update_scope_mapping(mapping.clone()).await {
-        Ok(()) => {
-            info!(actor = %actor.0, scope = %mapping.scope, "scope mapping updated");
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.update_scope_mapping(mapping.clone()).await?;
+    info!(actor = %actor.0, scope = %mapping.scope, "scope mapping updated");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_scope_mapping(
     State(service): State<Arc<ResourceService>>,
     Extension(actor): Extension<Actor>,
     Path(scope): Path<String>,
-) -> Response {
-    match service.delete_scope_mapping(&scope).await {
-        Ok(()) => {
-            info!(actor = %actor.0, scope = %scope, "scope mapping deleted");
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => resource_error_response(e),
-    }
-}
-
-fn resource_error_response(err: ResourceError) -> Response {
-    match err {
-        ResourceError::NotFound(_) => StatusCode::NOT_FOUND.into_response(),
-        ResourceError::Conflict(_) => StatusCode::CONFLICT.into_response(),
-        ResourceError::ReservedClaim(key) => {
-            (StatusCode::BAD_REQUEST, format!("Claim key '{key}' is reserved and cannot be set via scope mapping"))
-                .into_response()
-        }
-        ResourceError::DatabaseError(msg) => {
-            tracing::error!("Storage error: {msg}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-        ResourceError::ClaimConflict(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+) -> Result<StatusCode, ManagementApiError> {
+    service.delete_scope_mapping(&scope).await?;
+    info!(actor = %actor.0, scope = %scope, "scope mapping deleted");
+    Ok(StatusCode::NO_CONTENT)
 }

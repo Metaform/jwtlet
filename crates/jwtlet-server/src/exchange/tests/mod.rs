@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use axum::body::to_bytes;
 use axum::extract::{Form, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use dsdk_facet_core::context::ParticipantContext;
 use dsdk_facet_core::jwt::{JwtGenerationError, JwtGenerator, JwtVerificationError, JwtVerifier, TokenClaims};
 use jwtlet_core::resource::{
@@ -33,7 +34,9 @@ const PARTICIPANT_CONTEXT: &str = "test-context";
 #[tokio::test]
 async fn exchange_token_returns_200_with_token_on_success() {
     let service = make_service(ok_verifier(), ok_generator(), mapping_store(mapping(&["read"])));
-    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read")))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read"))))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_body(response).await;
     assert_eq!(body["access_token"], "generated.jwt.token");
@@ -46,7 +49,7 @@ async fn exchange_token_returns_400_for_wrong_grant_type() {
     let service = make_service(ok_verifier(), ok_generator(), empty_store());
     let mut f = form(None);
     f.grant_type = "client_credentials".to_string();
-    let response = token_exchange(State(Arc::new(service)), Form(f)).await;
+    let response = token_exchange(State(Arc::new(service)), Form(f)).await.into_response();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = json_body(response).await;
     assert_eq!(body["error"], "unsupported_grant_type");
@@ -55,7 +58,9 @@ async fn exchange_token_returns_400_for_wrong_grant_type() {
 #[tokio::test]
 async fn exchange_token_returns_403_for_unauthorized() {
     let service = make_service(ok_verifier(), ok_generator(), empty_store());
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = json_body(response).await;
     assert_eq!(body["error"], "unauthorized_client");
@@ -64,7 +69,9 @@ async fn exchange_token_returns_403_for_unauthorized() {
 #[tokio::test]
 async fn exchange_token_returns_400_for_token_verification_failure() {
     let service = make_service(err_verifier(), ok_generator(), empty_store());
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = json_body(response).await;
     assert_eq!(body["error"], "invalid_grant");
@@ -73,7 +80,9 @@ async fn exchange_token_returns_400_for_token_verification_failure() {
 #[tokio::test]
 async fn exchange_token_returns_500_for_service_error() {
     let service = make_service(ok_verifier(), ok_generator(), err_store());
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = json_body(response).await;
     assert_eq!(body["error"], "server_error");
@@ -82,7 +91,9 @@ async fn exchange_token_returns_500_for_service_error() {
 #[tokio::test]
 async fn exchange_token_returns_500_for_generation_error() {
     let service = make_service(ok_verifier(), err_generator(), mapping_store(mapping(&[])));
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = json_body(response).await;
     assert_eq!(body["error"], "server_error");
@@ -95,14 +106,18 @@ async fn exchange_token_parses_scope_as_space_separated_list() {
         ok_generator(),
         mapping_store(mapping(&["read", "write"])),
     );
-    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write")))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write"))))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn exchange_token_passes_empty_scopes_when_scope_absent() {
     let service = make_service(ok_verifier(), ok_generator(), mapping_store(mapping(&[])));
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -216,7 +231,8 @@ async fn exchange_token_returns_200_when_requested_audience_is_in_allowlist() {
         State(Arc::new(service)),
         Form(form_with_audience(Some("read"), Some(alt))),
     )
-    .await;
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -234,7 +250,8 @@ async fn exchange_token_returns_403_when_audience_not_in_allowlist() {
             Some("https://not-allowed.example.com"),
         )),
     )
-    .await;
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = json_body(response).await;
     assert_eq!(body["error"], "unauthorized_client");
@@ -247,7 +264,9 @@ async fn exchange_token_returns_200_when_no_audience_requested_and_allowlist_set
         ok_generator(),
         mapping_store(mapping_with_audiences(&["read"], &[TOKEN_AUDIENCE])),
     );
-    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read")))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read"))))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -262,14 +281,17 @@ async fn exchange_token_returns_403_when_no_allowlist_and_non_default_audience_r
         State(Arc::new(service)),
         Form(form_with_audience(Some("read"), Some("https://other.example.com"))),
     )
-    .await;
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn exchange_token_returns_no_error_description_on_token_verification_failure() {
     let service = make_service(err_verifier(), ok_generator(), empty_store());
-    let response = token_exchange(State(Arc::new(service)), Form(form(None))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(None)))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = json_body(response).await;
     assert_eq!(body["error"], "invalid_grant");
@@ -310,7 +332,9 @@ async fn exchange_token_returns_400_for_scope_claim_conflict() {
             }))
         })),
     );
-    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write")))).await;
+    let response = token_exchange(State(Arc::new(service)), Form(form(Some("read write"))))
+        .await
+        .into_response();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = json_body(response).await;
     assert_eq!(body["error"], "invalid_scope");
