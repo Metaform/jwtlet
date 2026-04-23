@@ -47,9 +47,9 @@ pub struct ManagementState {
     pub client_audience: String,
 }
 
-pub const ROLE_MANAGEMENT_READ: &str = "management:read";
-pub const ROLE_MAPPINGS_WRITE: &str = "mappings:write";
-pub const ROLE_SCOPES_WRITE: &str = "scopes:write";
+pub const ROLE_MANAGEMENT_READ: &str = "jwtlet:management:read";
+pub const ROLE_MAPPINGS_WRITE: &str = "jwtlet:management:mappings:write";
+pub const ROLE_SCOPES_WRITE: &str = "jwtlet:management:scope:write";
 
 pub fn management_routes(state: ManagementState) -> Router {
     let auth = |role| AuthState { management: state.clone(), required_role: role };

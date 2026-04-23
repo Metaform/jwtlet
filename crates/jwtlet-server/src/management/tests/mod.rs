@@ -335,7 +335,7 @@ async fn post_scope_forbidden_with_only_read_role() {
 }
 
 // ============================================================================
-// R2 — Split write roles: mappings:write and scopes:write are independent
+// R2 — Split write roles: jwtlet:management:mappings:write and jwtlet:management:scope:write are independent
 // ============================================================================
 
 #[tokio::test]
@@ -669,7 +669,7 @@ fn unauthorized() -> StubAuthorizer {
 fn make_router() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["mappings:write".to_string(), "scopes:write".to_string()].into())
+        .roles(["jwtlet:management:mappings:write".to_string(), "jwtlet:management:scope:write".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }
@@ -678,9 +678,9 @@ fn make_router_with_both_roles() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
         .roles([
-            "management:read".to_string(),
-            "mappings:write".to_string(),
-            "scopes:write".to_string(),
+            "jwtlet:management:read".to_string(),
+            "jwtlet:management:mappings:write".to_string(),
+            "jwtlet:management:scope:write".to_string(),
         ].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
@@ -689,7 +689,7 @@ fn make_router_with_both_roles() -> Router {
 fn make_router_with_mappings_write() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["mappings:write".to_string()].into())
+        .roles(["jwtlet:management:mappings:write".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }
@@ -697,7 +697,7 @@ fn make_router_with_mappings_write() -> Router {
 fn make_router_with_scopes_write() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["scopes:write".to_string()].into())
+        .roles(["jwtlet:management:scope:write".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }
@@ -833,7 +833,7 @@ async fn get_scopes(router: &Router) -> axum::response::Response {
 fn make_router_with_read_role() -> Router {
     let authorizer = MemoryServiceAccountStore::from_accounts([ServiceAccount::builder()
         .client_id(MGMT_CLIENT_ID)
-        .roles(["management:read".to_string()].into())
+        .roles(["jwtlet:management:read".to_string()].into())
         .build()]);
     make_router_with_auth(ok_verifier(), authorizer)
 }

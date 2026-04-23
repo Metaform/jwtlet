@@ -24,4 +24,4 @@ data:
     token_file = "/vault/secrets/.vault-token"
 
     [service_accounts]
-    "system:serviceaccount:vault-e2e-test:test-app-sa" = ["mappings:write", "scopes:write"]
+    "system:serviceaccount:vault-e2e-test:test-app-sa" = ["jwtlet:management:mappings:write", "jwtlet:management:scope:write"]

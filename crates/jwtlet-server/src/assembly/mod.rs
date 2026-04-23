@@ -178,7 +178,7 @@ fn build_resource_service(store: Arc<dyn ResourceStore>) -> ResourceService {
 
 fn build_service_account_authorizer(accounts: &HashMap<String, Vec<String>>) -> Arc<dyn ServiceAccountAuthorizer> {
     let all_roles: Vec<&str> = accounts.values().flat_map(|r| r.iter().map(String::as_str)).collect();
-    for role in &["mappings:write", "scopes:write"] {
+    for role in &["jwtlet:management:mappings:write", "jwtlet:management:scope:write"] {
         if !all_roles.contains(role) {
             warn!(
                 "No service account with '{role}' role is configured — \
